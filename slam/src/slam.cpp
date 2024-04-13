@@ -1,19 +1,25 @@
 #include "slam.h"
 
+static int coun = 0;
+
 Slam::Slam(const Eigen::MatrixXf& landMarks, const Eigen::MatrixXf& wayPoints)
     : mLM(landMarks)
     , mWP(wayPoints)
 {
+    mTABLE = Eigen::MatrixXf::Zero(1, mLM.cols());
 }
 
-Slam::ControlNoiseState_t Slam::addControlNoise(float& v, float& swa, const Eigen::MatrixXf& Q, bool additiveNoise)
+Slam::ControlNoiseState_t
+    Slam::addControlNoise(const float& v, const float& swa, const Eigen::MatrixXf& Q, bool additiveNoise)
 {
+    float iv   = v;
+    float iswa = swa;
     if (additiveNoise)
     {
-        v   = v + generateRandomNumer<float>(mNoiseLowerBound, mNoiseUpperBound) * std::sqrt(Q(0, 0));
-        swa = swa + generateRandomNumer<float>(mNoiseLowerBound, mNoiseUpperBound) * std::sqrt(Q(1, 1));
+        iv   = iv + generateRandomNumer<float>(mVelocityNoiseLowerBound, mVelocityNoiseUpperBound) * std::sqrt(Q(0, 0));
+        iswa = iswa + generateRandomNumer<float>(mSwaNoiseLowerBound, mSwaNoiseUpperBound) * std::sqrt(Q(1, 1));
     }
-    return {v, swa};
+    return {iv, iswa};
 }
 
 void Slam::addObservationNoise(Eigen::MatrixXf& Z, const Eigen::MatrixXf& R, bool additiveNoise)
@@ -22,10 +28,10 @@ void Slam::addObservationNoise(Eigen::MatrixXf& Z, const Eigen::MatrixXf& R, boo
     {
         for (int col = 0; col < Z.cols(); col++)
         {
-            Z(0, col) =
-                Z(0, col) + (generateRandomNumer<float>(mNoiseLowerBound, mNoiseUpperBound) * std::sqrt(R(0, 0)));
+            Z(0, col) = Z(0, col) + (generateRandomNumer<float>(mVelocityNoiseLowerBound, mVelocityNoiseUpperBound) *
+                                     std::sqrt(R(0, 0)));
             Z(1, col) =
-                Z(1, col) + (generateRandomNumer<float>(mNoiseLowerBound, mNoiseUpperBound) * std::sqrt(R(1, 1)));
+                Z(1, col) + (generateRandomNumer<float>(mSwaNoiseLowerBound, mSwaNoiseUpperBound) * std::sqrt(R(1, 1)));
         }
     }
 }
@@ -134,7 +140,7 @@ void Slam::batchUpdate(Eigen::MatrixXf&       X,
             L(0, 0)           = 2 * (i + 1) - 1;
             L(0, 1)           = 2 * (i + 1);
 
-            auto [Zp, HT] = observeModel(X, IDF(i));
+            auto [Zp, HT] = observeModel(X, IDF(i)); // LAST KNOWN PROBLEM IS HERE
 
             H.block(L(0, 0) - 1, 0, L.cols(), H.cols()) = HT;
 
@@ -146,6 +152,7 @@ void Slam::batchUpdate(Eigen::MatrixXf&       X,
 
             RR.block(L(0, 0) - 1, L(0, 0) - 1, L.cols(), L.cols()) = R;
         }
+
         choleskyUpdate(X, P, V, RR, H);
     }
     catch (std::exception& e)
@@ -182,11 +189,11 @@ void Slam::choleskyUpdate(Eigen::MatrixXf&       X,
 void Slam::computeSteering(const Eigen::MatrixXf& X,
                            const Eigen::MatrixXf& WP,
                            int&                   iwp,
-                           const float            minD,
+                           const float&           minD,
                            float&                 swa,
-                           const float            rateSWA,
-                           const float            maxSWA,
-                           const float            dt)
+                           const float&           rateSWA,
+                           const float&           maxSWA,
+                           const float&           dt)
 {
     try
     {
@@ -237,7 +244,7 @@ void Slam::computeSteering(const Eigen::MatrixXf& X,
     }
 }
 
-Eigen::MatrixXf Slam::computeRangeBearing(Eigen::MatrixXf& X, Eigen::MatrixXf& LM)
+Eigen::MatrixXf Slam::computeRangeBearing(const Eigen::MatrixXf& X, const Eigen::MatrixXf& LM)
 {
     Eigen::MatrixXf Z = Eigen::MatrixXf::Zero(0, 0);
     try
@@ -283,12 +290,116 @@ Slam::NormalizedInnovation_t Slam::computeAssociation(const Eigen::MatrixXf& X,
     return {nis(0, 0), nd};
 }
 
+Slam::Association_t Slam::dataAssociateTable(const Eigen::MatrixXf& X,
+                                             const Eigen::MatrixXf& Z,
+                                             const Eigen::MatrixXf& IDZ,
+                                             Eigen::MatrixXf&       TABLE)
+{
+    Eigen::MatrixXf ZF;
+    Eigen::MatrixXf ZN;
+    Eigen::MatrixXf IDF;
+    Eigen::MatrixXf IDN;
+
+    ZF.resize(0, 0);
+    ZN.resize(0, 0);
+    IDF.resize(0, 0);
+    IDN.resize(0, 0);
+
+    // find associations (zf) and new features (zn)
+    for (int i = 0; i < IDZ.cols(); i++)
+    {
+        int id = IDZ(0, i);
+        if (TABLE(0, id - 1) == 0) // new feature
+        {
+            if (ZN.rows() == 0 && ZN.cols() == 0)
+            {
+                ZN.resize(2, 1);
+                ZN                   = Eigen::MatrixXf::Zero(2, 1);
+                ZN.block(0, 0, 2, 1) = Z.col(i); // Z.block(0, i, Z.rows(), 1);
+            }
+            else
+            {
+                const auto ZNT = ZN;
+                ZN.resize(ZNT.rows(), ZNT.cols() + 1);
+                ZN                            = Eigen::MatrixXf::Zero(ZNT.rows(), ZNT.cols() + 1);
+                ZN.block(0, 0, 2, ZNT.cols()) = ZNT;
+                ZN.block(0, ZNT.cols(), 2, 1) = Z.col(i); // Z.block(0, i, Z.rows(), 1);
+            }
+
+            if (IDN.rows() == 0 && IDN.cols() == 0)
+            {
+                IDN.resize(1, 1);
+                IDN       = Eigen::MatrixXf::Zero(1, 1);
+                IDN(0, 0) = id;
+            }
+            else
+            {
+                const auto IDNT = IDN;
+                IDN.resize(IDNT.rows(), IDNT.cols() + 1);
+                IDN                             = Eigen::MatrixXf::Zero(IDNT.rows(), IDNT.cols() + 1);
+                IDN.block(0, 0, 1, IDNT.cols()) = IDNT;
+                IDN(0, IDNT.cols())             = id;
+            }
+        }
+        else
+        {
+            if (ZF.rows() == 0 && ZF.cols() == 0)
+            {
+                ZF.resize(2, 1);
+                ZF                   = Eigen::MatrixXf::Zero(2, 1);
+                ZF.block(0, 0, 2, 1) = Z.col(i); // Z.block(0, i, Z.rows(), 1);
+            }
+            else
+            {
+                const auto ZFT = ZF;
+                ZF.resize(ZFT.rows(), ZFT.cols() + 1);
+                ZF                            = Eigen::MatrixXf::Zero(ZFT.rows(), ZFT.cols() + 1);
+                ZF.block(0, 0, 2, ZFT.cols()) = ZFT;
+                ZF.block(0, ZFT.cols(), 2, 1) = Z.col(i); // Z.block(0, i, Z.rows(), 1);
+            }
+
+            if (IDF.rows() == 0 && IDF.cols() == 0)
+            {
+                IDF.resize(1, 1);
+                IDF       = Eigen::MatrixXf::Zero(1, 1);
+                IDF(0, 0) = TABLE(id - 1);
+            }
+            else
+            {
+                const auto IDFT = IDF;
+                IDF.resize(IDFT.rows(), IDFT.cols() + 1);
+                IDF                             = Eigen::MatrixXf::Zero(IDFT.rows(), IDFT.cols() + 1);
+                IDF.block(0, 0, 1, IDFT.cols()) = IDFT;
+                IDF(0, IDFT.cols())             = TABLE(id - 1);
+            }
+        }
+    }
+
+    // add new feature IDs to lookup table
+    int   nxv = 3;                                           // number of vehicle pose states
+    float nf  = (std::max(X.rows(), X.cols()) - nxv) / 2.0F; // number of features already in map
+    // table(idn) = Nf + (1 : size(zn, 2)); // add new feature positions to lookup table
+
+    std::vector<float> temp = {};
+    for (int i = 1; i <= ZN.cols(); i++)
+    {
+        temp.push_back(nf + i);
+    }
+    for (int i = 0; i < IDN.cols(); i++)
+    {
+        int id           = IDN(0, i);
+        TABLE(0, id - 1) = temp.at(i);
+    }
+
+    return {ZF, ZN, IDF};
+}
+
 Slam::Association_t Slam::dataAssociate(const Eigen::MatrixXf& X,
                                         const Eigen::MatrixXf& P,
                                         const Eigen::MatrixXf& Z,
                                         const Eigen::MatrixXf& R,
-                                        const float            gate1,
-                                        const float            gate2)
+                                        const float&           gate1,
+                                        const float&           gate2)
 {
     Eigen::MatrixXf ZF;
     Eigen::MatrixXf ZN;
@@ -312,15 +423,15 @@ Slam::Association_t Slam::dataAssociate(const Eigen::MatrixXf& X,
             float outer = std::numeric_limits<float>::infinity();
 
             // search for neighbours
-            for (int j = 0; j < nf; j++)
+            for (int j = 1; j <= nf; j++)
             {
-                auto [nis, nd] = computeAssociation(X, P, Z.col(i), R, j + 1);
+                auto [nis, nd] = computeAssociation(X, P, Z.col(i), R, j); // root casue is here
 
                 // if within gate, store nearest-neighbour
                 if (nis < gate1 && nd < nbest)
                 {
                     nbest = nd;
-                    jbest = j + 1;
+                    jbest = j;
                 }
                 else if (nis < outer) // else store best nis value
                 {
@@ -335,7 +446,7 @@ Slam::Association_t Slam::dataAssociate(const Eigen::MatrixXf& X,
                 {
                     ZF.resize(2, 1);
                     ZF                   = Eigen::MatrixXf::Zero(2, 1);
-                    ZF.block(0, 0, 2, 1) = Z.block(0, i, Z.rows(), 1);
+                    ZF.block(0, 0, 2, 1) = Z.col(i); // Z.block(0, i, Z.rows(), 1);
                 }
                 else
                 {
@@ -343,7 +454,7 @@ Slam::Association_t Slam::dataAssociate(const Eigen::MatrixXf& X,
                     ZF.resize(ZFT.rows(), ZFT.cols() + 1);
                     ZF                            = Eigen::MatrixXf::Zero(ZFT.rows(), ZFT.cols() + 1);
                     ZF.block(0, 0, 2, ZFT.cols()) = ZFT;
-                    ZF.block(0, ZFT.cols(), 2, 1) = Z.block(0, i, Z.rows(), 1);
+                    ZF.block(0, ZFT.cols(), 2, 1) = Z.col(i); // Z.block(0, i, Z.rows(), 1);
                 }
 
                 if (IDF.rows() == 0 && IDF.cols() == 0)
@@ -367,7 +478,7 @@ Slam::Association_t Slam::dataAssociate(const Eigen::MatrixXf& X,
                 {
                     ZN.resize(2, 1);
                     ZN                   = Eigen::MatrixXf::Zero(2, 1);
-                    ZN.block(0, 0, 2, 1) = Z.block(0, i, Z.rows(), 1);
+                    ZN.block(0, 0, 2, 1) = Z.col(i); // Z.block(0, i, Z.rows(), 1);
                 }
                 else
                 {
@@ -375,7 +486,7 @@ Slam::Association_t Slam::dataAssociate(const Eigen::MatrixXf& X,
                     ZN.resize(ZNT.rows(), ZNT.cols() + 1);
                     ZN                            = Eigen::MatrixXf::Zero(ZNT.rows(), ZNT.cols() + 1);
                     ZN.block(0, 0, 2, ZNT.cols()) = ZNT;
-                    ZN.block(0, ZNT.cols(), 2, 1) = Z.block(0, i, Z.rows(), 1);
+                    ZN.block(0, ZNT.cols(), 2, 1) = Z.col(i); // Z.block(0, i, Z.rows(), 1);
                 }
             }
         }
@@ -387,14 +498,22 @@ Slam::Association_t Slam::dataAssociate(const Eigen::MatrixXf& X,
     return {ZF, ZN, IDF};
 }
 
-Slam::Observation_t Slam::getObservations(Eigen::MatrixXf& X, Eigen::MatrixXf& LM, Eigen::MatrixXf& IDF, float rmax)
+Slam::Observation_t Slam::getObservations(const Eigen::MatrixXf& X,
+                                          const Eigen::MatrixXf& LM,
+                                          const Eigen::MatrixXf& IDF,
+                                          const float&           rmax)
 {
-    getVisibleLandmarks(X, LM, IDF, rmax);
-    return {computeRangeBearing(X, LM), IDF};
+    auto [iLM, iIDF] = getVisibleLandmarks(X, LM, IDF, rmax);
+    return {computeRangeBearing(X, iLM), iIDF};
 }
 
-void Slam::getVisibleLandmarks(Eigen::MatrixXf& X, Eigen::MatrixXf& LM, Eigen::MatrixXf& IDF, float rmax)
+Slam::VisibleLandmarks_t Slam::getVisibleLandmarks(const Eigen::MatrixXf& X,
+                                                   const Eigen::MatrixXf& LM,
+                                                   const Eigen::MatrixXf& IDF,
+                                                   const float&           rmax)
 {
+    Eigen::MatrixXf iLM  = LM;
+    Eigen::MatrixXf iIDF = IDF;
     try
     {
         std::vector<float> dx_v;
@@ -426,22 +545,23 @@ void Slam::getVisibleLandmarks(Eigen::MatrixXf& X, Eigen::MatrixXf& LM, Eigen::M
                                return counter;
                            }
                        });
+
         // the bounding box test is unnecessary but illustrates a possible speedup technique as it quickly eliminates
         // distant points.Ordering the landmark set would make this operation %O(logN) rather that O(N).
-        const auto LMT  = LM;
-        const auto IDFT = IDF;
+        const auto LMT  = iLM;
+        const auto IDFT = iIDF;
 
-        LM.resize(2, tracker.size());
-        LM = Eigen::MatrixXf::Zero(2, tracker.size());
+        iLM.resize(2, tracker.size());
+        iLM = Eigen::MatrixXf::Zero(2, tracker.size());
 
-        IDF.resize(1, tracker.size());
-        IDF = Eigen::MatrixXf::Zero(1, tracker.size());
+        iIDF.resize(1, tracker.size());
+        iIDF = Eigen::MatrixXf::Zero(1, tracker.size());
 
         int index = 0;
         for (const auto& t : tracker)
         {
-            LM.block(0, index, 2, 1)  = LMT.block(0, t - 1, 2, 1);
-            IDF.block(0, index, 1, 1) = IDFT.block(0, t - 1, 1, 1);
+            iLM.block(0, index, 2, 1)  = LMT.block(0, t - 1, 2, 1);
+            iIDF.block(0, index, 1, 1) = IDFT.block(0, t - 1, 1, 1);
             index++;
         }
     }
@@ -449,6 +569,7 @@ void Slam::getVisibleLandmarks(Eigen::MatrixXf& X, Eigen::MatrixXf& LM, Eigen::M
     {
         std::cout << e.what() << "\t" << "getVisibleLandmarks" << std::endl;
     }
+    return {iLM, iIDF};
 }
 
 void Slam::josephUpdate(Eigen::MatrixXf&       X,
@@ -480,7 +601,6 @@ void Slam::josephUpdate(Eigen::MatrixXf&       X,
 
 void Slam::landmarkBasedNavigation()
 {
-    bool status = false;
     try
     {
         Eigen::MatrixXf Q = Eigen::MatrixXf::Zero(2, 2);
@@ -495,14 +615,6 @@ void Slam::landmarkBasedNavigation()
         R(1, 0)           = 0.0F;
         R(1, 1)           = std::pow(mSigmaB, 2.0F);
 
-        Eigen::MatrixXf Host = Eigen::MatrixXf::Zero(2, 3);
-        Host(0, 0)           = 0.0F;
-        Host(0, 1)           = -mWheelBase;
-        Host(0, 2)           = -mWheelBase;
-        Host(1, 0)           = 0.0F;
-        Host(1, 1)           = -2.0F;
-        Host(1, 2)           = 2.0F;
-
         // initialise states
         Eigen::MatrixXf XTrue = Eigen::MatrixXf::Zero(3, 1);
         Eigen::MatrixXf X     = Eigen::MatrixXf::Zero(3, 1);
@@ -515,6 +627,7 @@ void Slam::landmarkBasedNavigation()
         {
             FeatureTag(0, id) = static_cast<float>(id) + 1.0F;
         }
+
         int   iwp = 1;    //  index of first waypoint
         float swa = 0.0F; // initial steering wheel angle
 
@@ -530,7 +643,7 @@ void Slam::landmarkBasedNavigation()
 
         while (iwp <= mWP.cols() && iwp > 0)
         {
-            // compute true data
+            // compute steering wheel angle
             computeSteering(XTrue, mWP, iwp, mAtWaypoint, swa, mRateSWA, mMaxSWA, dt);
 
             // perform loops : if final waypoint reached, go back to first
@@ -539,7 +652,9 @@ void Slam::landmarkBasedNavigation()
                 iwp          = 1;
                 mNumberLoops = mNumberLoops - 1;
             }
+
             vehicleModel(XTrue, mVelocity, swa, mWheelBase, dt); // movment of the platform(Odo meter reading)
+
             auto [vn, swan] = addControlNoise(mVelocity, swa, Q, mSwitchControlNoise);
 
             // EKF predict
@@ -552,12 +667,25 @@ void Slam::landmarkBasedNavigation()
             dtsum = dtsum + dt;
             if (dtsum >= mDtObserve)
             {
-                dtsum                       = 0.0F;
+                dtsum = 0.0F;
+
                 auto [Z, FeatureTagVisible] = getObservations(XTrue, mLM, FeatureTag, mMaxRange);
+
                 addObservationNoise(Z, R, mSwitchSensorNoise);
-                auto [ZF, ZN, IDF] = dataAssociate(X, P, Z, RE, mGateReject, mGateAugment);
-                update(X, P, ZF, RE, IDF, mSwitchBatchUpdate);
-                augment(X, P, ZN, RE);
+
+                if (mSwitchAssociationKnown)
+                {
+
+                    auto [ZF, ZN, IDF] = dataAssociateTable(X, Z, FeatureTagVisible, mTABLE);
+                    update(X, P, ZF, RE, IDF, mSwitchBatchUpdate);
+                    augment(X, P, ZN, RE);
+                }
+                else
+                {
+                    auto [ZF, ZN, IDF] = dataAssociate(X, P, Z, RE, mGateReject, mGateAugment);
+                    update(X, P, ZF, RE, IDF, mSwitchBatchUpdate);
+                    augment(X, P, ZN, RE);
+                }
             }
         }
     }
@@ -567,7 +695,7 @@ void Slam::landmarkBasedNavigation()
     }
 }
 
-void Slam::observeHeading(Eigen::MatrixXf& X, Eigen::MatrixXf& P, const float phi, bool useHeading)
+void Slam::observeHeading(Eigen::MatrixXf& X, Eigen::MatrixXf& P, const float& phi, bool useHeading)
 {
     try
     {
@@ -603,37 +731,39 @@ Slam::ObserveModel_t Slam::observeModel(const Eigen::MatrixXf& X, int idf)
 
     try
     {
+        if (X.rows() > 3)
+        {
+            // auxiliary values
+            float dx  = X(fpos - 1, 0) - X(0, 0);
+            float dy  = X(fpos, 0) - X(1, 0);
+            float d2  = std::pow(dx, 2.0F) + std::pow(dy, 2.0F);
+            float d   = std::sqrt(d2);
+            float xd  = dx / d;
+            float yd  = dy / d;
+            float xd2 = dx / d2;
+            float yd2 = dy / d2;
 
-        // auxiliary values
-        float dx  = X(fpos - 1, 0) - X(0, 0);
-        float dy  = X(fpos, 0) - X(1, 0);
-        float d2  = std::pow(dx, 2.0F) + std::pow(dy, 2.0F);
-        float d   = std::sqrt(d2);
-        float xd  = dx / d;
-        float yd  = dy / d;
-        float xd2 = dx / d2;
-        float yd2 = dy / d2;
+            // predict Z
+            Z(0, 0) = d;
+            Z(1, 0) = std::atan2(dy, dx) - X(2, 0);
 
-        // predict Z
-        Z(0, 0) = d;
-        Z(1, 0) = std::atan2(dy, dx) - X(2, 0);
+            // calculate H
+            Eigen::MatrixXf HU = Eigen::MatrixXf::Zero(2, 3);
+            HU(0, 0)           = -xd;
+            HU(0, 1)           = -yd;
+            HU(0, 2)           = 0.0F;
+            HU(1, 0)           = yd2;
+            HU(1, 1)           = -xd2;
+            HU(1, 2)           = -1.0F;
+            Eigen::MatrixXf LU = Eigen::MatrixXf::Zero(2, 2);
+            LU(0, 0)           = xd;
+            LU(0, 1)           = yd;
+            LU(1, 0)           = -yd2;
+            LU(1, 1)           = xd2;
 
-        // calculate H
-        Eigen::MatrixXf HU = Eigen::MatrixXf::Zero(2, 3);
-        HU(0, 0)           = -xd;
-        HU(0, 1)           = -yd;
-        HU(0, 2)           = 0.0F;
-        HU(1, 0)           = yd2;
-        HU(1, 1)           = -xd2;
-        HU(1, 2)           = -1.0F;
-        Eigen::MatrixXf LU = Eigen::MatrixXf::Zero(2, 2);
-        LU(0, 0)           = xd;
-        LU(0, 1)           = yd;
-        LU(1, 0)           = -yd2;
-        LU(1, 1)           = xd2;
-
-        H.block(0, 0, 2, 3)        = HU;
-        H.block(0, fpos - 1, 2, 2) = LU;
+            H.block(0, 0, 2, 3)        = HU;
+            H.block(0, fpos - 1, 2, 2) = LU;
+        }
     }
     catch (std::exception& e)
     {
@@ -660,11 +790,11 @@ float Slam::pi2Pi(float angle)
 
 void Slam::predict(Eigen::MatrixXf&       X,
                    Eigen::MatrixXf&       P,
-                   float                  v,
-                   float                  swa,
+                   const float&           v,
+                   const float&           swa,
                    const Eigen::MatrixXf& Q,
-                   float                  wb,
-                   float                  dt)
+                   const float&           wb,
+                   const float&           dt)
 {
     try
     {
@@ -723,7 +853,7 @@ void Slam::singleUpdate(Eigen::MatrixXf&       X,
         int lenZ = Z.cols();
         for (int i = 0; i < lenZ; i++)
         {
-            auto [Zp, H] = observeModel(X, IDF(i));
+            auto [Zp, H] = observeModel(X, IDF(0, i));
 
             Eigen::MatrixXf V = Eigen::MatrixXf::Zero(2, 1);
             V(0, 0)           = Z(0, i) - Zp(0, 0);
@@ -735,38 +865,6 @@ void Slam::singleUpdate(Eigen::MatrixXf&       X,
     {
         std::cout << e.what() << "\t" << "singleUpdate" << std::endl;
     }
-}
-
-Eigen::MatrixXf Slam::transform2Global(Eigen::MatrixXf& P, const Eigen::MatrixXf& B)
-{
-    try
-    {
-        // rotate
-        Eigen::MatrixXf ROT = Eigen::MatrixXf::Zero(2, 2);
-        ROT(0, 0)           = std::cos(B(2, 0));
-        ROT(0, 1)           = -std::sin(B(2, 0));
-        ROT(1, 0)           = std::sin(B(2, 0));
-        ROT(1, 1)           = std::cos(B(2, 0));
-
-        // translate
-        P.block(0, 0, 1, P.cols()) = P.block(0, 0, 1, P.cols()) + B.block(0, 0, 1, 1);
-        P.block(1, 0, 1, P.cols()) = P.block(1, 0, 1, P.cols()) + B.block(1, 0, 1, 1);
-
-        // if P is a pose and not a point
-        if (P.rows() == 3)
-        {
-            for (int i = 0; i < P.cols(); i++)
-            {
-                P(2, i) = pi2Pi(P(2, i)) + B(2, 0);
-            }
-        }
-    }
-    catch (std::exception& e)
-    {
-        std::cout << e.what() << "\t" << "transform2Global" << std::endl;
-    }
-
-    return P;
 }
 
 void Slam::update(Eigen::MatrixXf&       X,
@@ -786,7 +884,7 @@ void Slam::update(Eigen::MatrixXf&       X,
     }
 }
 
-void Slam::vehicleModel(Eigen::MatrixXf& X, float v, float swa, float wb, float dt)
+void Slam::vehicleModel(Eigen::MatrixXf& X, const float& v, const float& swa, const float& wb, const float& dt)
 {
     try
     {
