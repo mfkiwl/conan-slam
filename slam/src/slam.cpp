@@ -1,7 +1,5 @@
 #include "slam.h"
 
-static int coun = 0;
-
 Slam::Slam(const Eigen::MatrixXf& landMarks, const Eigen::MatrixXf& wayPoints)
     : mLM(landMarks)
     , mWP(wayPoints)
@@ -311,6 +309,7 @@ Slam::Association_t Slam::dataAssociateTable(const Eigen::MatrixXf& X,
         int id = IDZ(0, i);
         if (TABLE(0, id - 1) == 0) // new feature
         {
+
             if (ZN.rows() == 0 && ZN.cols() == 0)
             {
                 ZN.resize(2, 1);
@@ -706,7 +705,7 @@ void Slam::observeHeading(Eigen::MatrixXf& X, Eigen::MatrixXf& P, const float& p
         // heading uncertainty - radians
         float           sigmaPhi = 0.01F * std::_Pi_val / 180.0F; // radians, heading uncertainty
         Eigen::MatrixXf H        = Eigen::MatrixXf::Zero(1, std::max(X.rows(), X.cols()));
-        H(2, 0)                  = 1.0F;
+        H(0, 2)                  = 1.0F;
 
         Eigen::MatrixXf V = Eigen::MatrixXf::Zero(1, 1);
         V(0, 0)           = pi2Pi(phi - X(2, 0));
@@ -858,6 +857,7 @@ void Slam::singleUpdate(Eigen::MatrixXf&       X,
             Eigen::MatrixXf V = Eigen::MatrixXf::Zero(2, 1);
             V(0, 0)           = Z(0, i) - Zp(0, 0);
             V(1, 0)           = pi2Pi(Z(1, i) - Zp(1, 0));
+
             choleskyUpdate(X, P, V, R, H);
         }
     }

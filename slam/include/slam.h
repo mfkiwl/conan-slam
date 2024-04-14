@@ -19,7 +19,7 @@ class Slam
   public:
     // Configuration for Air bus 380
     // Basic information: Length = 73.0 m, Speed 1,185 km/h = 329.1667 m/s (136.11 m/s is perfect)
-    float mVelocity   = 136.11F;                         // m/s
+    float mVelocity   = 83.33F;                          // m/s
     float mMaxSWA     = std::_Pi_val / 4.0F;             // radians, maximum steering angle (-MAXG < g < MAXG)
     float mRateSWA    = 90.0F * std::_Pi_val / (180.0F); // rad / s, maximum rate of change in steer angle
     float mWheelBase  = 73.0F;                           // metres, vehicle wheel-base
@@ -30,7 +30,7 @@ class Slam
     float mSigmaSWA = (1.0F * std::_Pi_val / 180.0F); // radians
 
     // observation parameters
-    float mMaxRange  = 10000.0F;             // metres
+    float mMaxRange  = 2000.0F;              // metres
     float mDtObserve = 0.058F * mDtControls; // seconds, time interval between observations
 
     // observation noises
@@ -38,21 +38,20 @@ class Slam
     float mSigmaB = (1.0F * std::_Pi_val / 180.0F); // radians
 
     // data association innovation gates (Mahalanobis distances)
-    float mGateReject  = 750.0F; // maximum distance for association
+    float mGateReject  = 50.0F;  // maximum distance for association
     float mGateAugment = 750.0F; // minimum distance for creation of new feature
 
     // waypoint proximity
     float mAtWaypoint  = 1.0F; // metres, distance from current waypoint at which to switch to next waypoint
     float mNumberLoops = 1.0F; // number of loops through the waypoint list
 
-    // switches (TO DO LIST..)
-    bool mSwitchControlNoise     = true;  // if 0, velocity and gamma are perfect
-    bool mSwitchSensorNoise      = true;  // if 0, measurements are perfect
-    bool mSwitchInflateNoise     = false; // if 1, the estimated Q and R are inflated (ie, add stabilising noise)
-    bool mSwitchHeadingKnown     = false; // if 1, the vehicle heading is observed directly at each iteration
-    bool mSwitchAssociationKnown = true;  // if 1, associations are given, if 0, they are estimated using gates
-    bool mSwitchBatchUpdate      = false; // if 1, process scan in batch, if 0, process sequentially
-    bool mSwitchSeedRandom       = false; // if not 0, seed the randn() with its value at beginning of simulation
+    // switches
+    bool mSwitchControlNoise     = true; // if 0, velocity and gamma are perfect
+    bool mSwitchSensorNoise      = true; // if 0, measurements are perfect
+    bool mSwitchInflateNoise     = true; // if 1, the estimated Q and R are inflated (ie, add stabilising noise)
+    bool mSwitchHeadingKnown     = true; // if 1, the vehicle heading is observed directly at each iteration
+    bool mSwitchAssociationKnown = false; // if 1, associations are given, if 0, they are estimated using gates
+    bool mSwitchBatchUpdate      = true; // if 1, process scan in batch, if 0, process sequentially
 
     // Noise selection
     float mVelocityNoiseLowerBound = -0.55F;
