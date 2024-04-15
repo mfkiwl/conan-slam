@@ -54,7 +54,7 @@ class Splinter(ConanFile):
         self.requires("eigen/3.4.0")
            
     def build_requirements(self):
-        self.tool_requires("cmake/3.27.0")
+        self.tool_requires("cmake/3.28.1")
                  
     def generate(self):
         tc = CMakeToolchain(self)

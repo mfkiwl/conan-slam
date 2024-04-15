@@ -1,5 +1,5 @@
 # Initial setup
-cmake_minimum_required(VERSION 3.27.0)
+cmake_minimum_required(VERSION 3.28.1)
 project(SLAM LANGUAGES CXX C VERSION 0.0.1)
 string(TOLOWER ${PROJECT_NAME} PROJECT_NAME_LOWER)
 set(CMAKE_CXX_STANDARD 20)
