@@ -6,7 +6,7 @@ EKF-based SLAM for valet, remote parking, and including or nav in GPS-denied sit
 # Prerequisite (Window):
 * Conan
 * Visual Studio 2022 (Win)
-* CMake
+* CMake (3.28.1)
 
 # Build (Window):
 * Run **run_debug.bat** or **run_release.bat**
