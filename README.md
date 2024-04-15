@@ -1,5 +1,16 @@
 # conan-slam
-EKF based SLAM for valet, remote parking and including or nav in gps denied situations. 
+EKF-based SLAM for valet, remote parking, and including or nav in GPS-denied situations. 
+
+# This branch provides a SLAM solution based on EKF.
+
+# Prerequisite (Window):
+* Conan
+* Visual Studio 2022 (Win)
+* CMake
+
+# Build (Window):
+* Run **run_debug.bat** or **run_release.bat**
+* *Run*.
 
 ## Outcome verification through visualizer (no support for visualizer)
 ![image](https://github.com/rajiv1977/conan-slam/assets/16018587/1f84ed03-29d7-4f07-b9ec-7c3b9182d81c)
