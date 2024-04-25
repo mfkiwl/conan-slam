@@ -46,12 +46,12 @@ class Slam
     float mNumberLoops = 1.0F; // number of loops through the waypoint list
 
     // switches
-    bool mSwitchControlNoise     = true; // if 0, velocity and gamma are perfect
-    bool mSwitchSensorNoise      = true; // if 0, measurements are perfect
-    bool mSwitchInflateNoise     = true; // if 1, the estimated Q and R are inflated (ie, add stabilising noise)
-    bool mSwitchHeadingKnown     = true; // if 1, the vehicle heading is observed directly at each iteration
+    bool mSwitchControlNoise     = true;  // if 0, velocity and gamma are perfect
+    bool mSwitchSensorNoise      = true;  // if 0, measurements are perfect
+    bool mSwitchInflateNoise     = true;  // if 1, the estimated Q and R are inflated (ie, add stabilising noise)
+    bool mSwitchHeadingKnown     = true;  // if 1, the vehicle heading is observed directly at each iteration
     bool mSwitchAssociationKnown = false; // if 1, associations are given, if 0, they are estimated using gates
-    bool mSwitchBatchUpdate      = true; // if 1, process scan in batch, if 0, process sequentially
+    bool mSwitchBatchUpdate      = true;  // if 1, process scan in batch, if 0, process sequentially
 
     // Noise selection
     float mVelocityNoiseLowerBound = -0.55F;
@@ -66,7 +66,12 @@ class Slam
     /// @param [in]  landMarks
     /// @param [in]  wayPoints
     /// @param [out] slam state and covariance
-    Slam(const Eigen::MatrixXf& landMarks, const Eigen::MatrixXf& wayPoints);
+    Slam(const Eigen::MatrixXf& landMarks, const Eigen::MatrixXf& wayPoints)
+        : mLM(landMarks)
+        , mWP(wayPoints)
+    {
+        mTABLE = Eigen::MatrixXf::Zero(1, mLM.cols());
+    }
     ~Slam() = default;
 
     struct ControlNoiseState_t
@@ -82,8 +87,8 @@ class Slam
     /// @param [in]  addNoise - include additive noise or not, by default no
     /// @param [out] ControlNoiseState_t - v with noise and swa with noises
     /// @note        Assume Q is diagonal
-    ControlNoiseState_t
-        addControlNoise(const float& v, const float& swa, const Eigen::MatrixXf& Q, bool additiveNoise = false);
+    virtual ControlNoiseState_t
+        addControlNoise(const float& v, const float& swa, const Eigen::MatrixXf& Q, bool additiveNoise = false) = 0;
 
     /// @brief       add random measurement noise
     ///
@@ -92,7 +97,7 @@ class Slam
     /// @param [in]  addNoise - include additive noise or not, by default no
     /// @param [out] Z - measurements
     /// @note        Assume R is diagonal
-    void addObservationNoise(Eigen::MatrixXf& Z, const Eigen::MatrixXf& R, bool additiveNoise = false);
+    virtual void addObservationNoise(Eigen::MatrixXf& Z, const Eigen::MatrixXf& R, bool additiveNoise = false) = 0;
 
     /// @brief       augment slam's state and covariance
     ///
@@ -104,7 +109,8 @@ class Slam
     /// @param [out] P - augmented covariance
     /// @note        assume the number of vehicle pose states is three, Only one value for R is used, as all
     /// measurements are assumed to have same noise properties
-    void augment(Eigen::MatrixXf& X, Eigen::MatrixXf& P, const Eigen::MatrixXf& Z, const Eigen::MatrixXf& R);
+    virtual void
+        augment(Eigen::MatrixXf& X, Eigen::MatrixXf& P, const Eigen::MatrixXf& Z, const Eigen::MatrixXf& R) = 0;
 
     /// @brief       add a new features to state
     ///
@@ -114,7 +120,10 @@ class Slam
     /// @param [in]  R - measurement noise covariance
     /// @param [out] X - augmented state
     /// @param [out] P - augmented covariance
-    void addOneNewFeature(Eigen::MatrixXf& X, Eigen::MatrixXf& P, const Eigen::MatrixXf& Z, const Eigen::MatrixXf& R);
+    virtual void addOneNewFeature(Eigen::MatrixXf&       X,
+                                  Eigen::MatrixXf&       P,
+                                  const Eigen::MatrixXf& Z,
+                                  const Eigen::MatrixXf& R) = 0;
 
     /// @brief       batch update
     /// @param [in]  X - predicted slam state
@@ -123,11 +132,11 @@ class Slam
     /// @param [in]  R - measurement noise covariance
     /// @param [in]  IDF - feature index for each z
     /// @param [out] updated state and covariance
-    void batchUpdate(Eigen::MatrixXf&       X,
-                     Eigen::MatrixXf&       P,
-                     const Eigen::MatrixXf& Z,
-                     const Eigen::MatrixXf& R,
-                     const Eigen::MatrixXf& IDF);
+    virtual void batchUpdate(Eigen::MatrixXf&       X,
+                             Eigen::MatrixXf&       P,
+                             const Eigen::MatrixXf& Z,
+                             const Eigen::MatrixXf& R,
+                             const Eigen::MatrixXf& IDF) = 0;
 
     /// @brief       calculate the EKF update given the prior state [X,P]
     ///
@@ -139,11 +148,11 @@ class Slam
     /// @param [out] updated mean and covariances
     /// @note        the(linearised) observation model H. The result is calculated using Cholesky factorisation, which
     /// is more numerically stable than a naive implementation.
-    void choleskyUpdate(Eigen::MatrixXf&       X,
-                        Eigen::MatrixXf&       P,
-                        const Eigen::MatrixXf& V,
-                        const Eigen::MatrixXf& R,
-                        const Eigen::MatrixXf& H);
+    virtual void choleskyUpdate(Eigen::MatrixXf&       X,
+                                Eigen::MatrixXf&       P,
+                                const Eigen::MatrixXf& V,
+                                const Eigen::MatrixXf& R,
+                                const Eigen::MatrixXf& H) = 0;
 
     /// @brief       compute steering wheel angle
     ///
@@ -156,21 +165,21 @@ class Slam
     /// @param [in]  maxSWA - max steering angle (rad)
     /// @param [in]  dt - timestep
     /// @param [out] swa - new current wheel steering angle and iwp - new current waypoint
-    void computeSteering(const Eigen::MatrixXf& X,
-                         const Eigen::MatrixXf& WP,
-                         int&                   iwp,
-                         const float&           minD,
-                         float&                 swa,
-                         const float&           rateSWA,
-                         const float&           maxSWA,
-                         const float&           dt);
+    virtual void computeSWA(const Eigen::MatrixXf& X,
+                            const Eigen::MatrixXf& WP,
+                            int&                   iwp,
+                            const float&           minD,
+                            float&                 swa,
+                            const float&           rateSWA,
+                            const float&           maxSWA,
+                            const float&           dt) = 0;
 
     /// @brief       compute range and bearing
     ///
     /// @param [in]  X - vehicle pose [x;y;phi]
     /// @param [in]  LM - set of all landmarks
     /// @param [out] Observation_t - set of range-bearing observations
-    Eigen::MatrixXf computeRangeBearing(const Eigen::MatrixXf& X, const Eigen::MatrixXf& LM);
+    virtual Eigen::MatrixXf computeRangeBearing(const Eigen::MatrixXf& X, const Eigen::MatrixXf& LM) = 0;
 
     struct NormalizedInnovation_t
     {
@@ -187,11 +196,11 @@ class Slam
     /// @param [in]  idf - extracted features id
     /// @param [out] NormalizedInnovation_t - return normalised innovation squared (ie, Mahalanobis distance) and
     /// normalised distance
-    NormalizedInnovation_t computeAssociation(const Eigen::MatrixXf& X,
-                                              const Eigen::MatrixXf& P,
-                                              const Eigen::MatrixXf& Z,
-                                              const Eigen::MatrixXf& R,
-                                              int                    idf);
+    virtual NormalizedInnovation_t computeAssociation(const Eigen::MatrixXf& X,
+                                                      const Eigen::MatrixXf& P,
+                                                      const Eigen::MatrixXf& Z,
+                                                      const Eigen::MatrixXf& R,
+                                                      int                    idf) = 0;
 
     struct Association_t
     {
@@ -209,10 +218,10 @@ class Slam
     /// @param [in]  IDZ - associted id with meas
     /// @param [in]  TABLE - feature/observation lookup table
     /// @param [out] Association_t - data associated information
-    Association_t dataAssociateTable(const Eigen::MatrixXf& X,
-                                     const Eigen::MatrixXf& Z,
-                                     const Eigen::MatrixXf& IDZ,
-                                     Eigen::MatrixXf&       TABLE);
+    virtual Association_t dataAssociateTable(const Eigen::MatrixXf& X,
+                                             const Eigen::MatrixXf& Z,
+                                             const Eigen::MatrixXf& IDZ,
+                                             Eigen::MatrixXf&       TABLE) = 0;
 
     /// @brief       Simple gated nearest-neighbour data-association. No clever feature caching tricks to speed up
     /// association, so computation is O(N), where N is the number of features in the state
@@ -223,12 +232,12 @@ class Slam
     /// @param [in]  R - measurement noise covariance
     /// @param [in]  gate1 and 2 - nearest-neighbour gates
     /// @param [out] Association_t - data associated information
-    Association_t dataAssociate(const Eigen::MatrixXf& X,
-                                const Eigen::MatrixXf& P,
-                                const Eigen::MatrixXf& Z,
-                                const Eigen::MatrixXf& R,
-                                const float&           gate1,
-                                const float&           gate2);
+    virtual Association_t dataAssociate(const Eigen::MatrixXf& X,
+                                        const Eigen::MatrixXf& P,
+                                        const Eigen::MatrixXf& Z,
+                                        const Eigen::MatrixXf& R,
+                                        const float&           gate1,
+                                        const float&           gate2) = 0;
 
     struct Observation_t
     {
@@ -243,10 +252,10 @@ class Slam
     /// @param [in]  IDF - index tags for each landmark
     /// @param [in]  rmax - maximum range of range-bearing sensor
     /// @param [out] Observation_t - set of range-bearing observations & landmark index tag for each observation
-    Observation_t getObservations(const Eigen::MatrixXf& X,
-                                  const Eigen::MatrixXf& LM,
-                                  const Eigen::MatrixXf& IDF,
-                                  const float&           rmax);
+    virtual Observation_t getObservations(const Eigen::MatrixXf& X,
+                                          const Eigen::MatrixXf& LM,
+                                          const Eigen::MatrixXf& IDF,
+                                          const float&           rmax) = 0;
 
     /// @brief       generate a random number between given lower and upper boundaries
     ///
@@ -274,10 +283,10 @@ class Slam
     /// @param [in]  IDF - index tags for each landmark
     /// @param [in]  rmax - maximum range of range-bearing sensor
     /// @param [out] VisibleLandmarks_t set & landmark index tag for each observation
-    VisibleLandmarks_t getVisibleLandmarks(const Eigen::MatrixXf& X,
-                                           const Eigen::MatrixXf& LM,
-                                           const Eigen::MatrixXf& IDF,
-                                           const float&           rmax);
+    virtual VisibleLandmarks_t getVisibleLandmarks(const Eigen::MatrixXf& X,
+                                                   const Eigen::MatrixXf& LM,
+                                                   const Eigen::MatrixXf& IDF,
+                                                   const float&           rmax) = 0;
 
     /// @brief       joseph update
     ///
@@ -289,19 +298,19 @@ class Slam
     /// @param [out] updated mean and covariances
     /// @note        This module is identical to KF_simple_update() except that it uses the Joseph - form covariance
     /// update, as shown in Bar - Shalom "Estimation with Applications...", 2001,p302.
-    void josephUpdate(Eigen::MatrixXf&       X,
-                      Eigen::MatrixXf&       P,
-                      const Eigen::MatrixXf& V,
-                      const Eigen::MatrixXf& R,
-                      const Eigen::MatrixXf& H);
+    virtual void josephUpdate(Eigen::MatrixXf&       X,
+                              Eigen::MatrixXf&       P,
+                              const Eigen::MatrixXf& V,
+                              const Eigen::MatrixXf& R,
+                              const Eigen::MatrixXf& H) = 0;
 
     struct State_t
     {
         Eigen::MatrixXf X;
         Eigen::MatrixXf P;
     };
-    /// @brief       perform landmarks based navigation
-    void landmarkBasedNavigation();
+    ///// @brief       perform landmarks based navigation
+    // virtual void landmarkBasedNavigation() = 0;
 
     /// @brief       make a symmetric matrix
     ///
@@ -319,7 +328,7 @@ class Slam
     /// @param [in]  phi - bearing measurements
     /// @param [in]  useHeadings - by default false
     /// @param [out] state and covariance
-    void observeHeading(Eigen::MatrixXf& X, Eigen::MatrixXf& P, const float& phi, bool useHeading = false);
+    virtual void observeHeading(Eigen::MatrixXf& X, Eigen::MatrixXf& P, const float& phi, bool useHeading = false) = 0;
 
     struct ObserveModel_t
     {
@@ -333,13 +342,13 @@ class Slam
     /// @param [in]  X - state vector
     /// @param [in]  idf - index of feature order in state
     /// @param [out] ObserveModel_t - predicted observation and observation Jacobian
-    ObserveModel_t observeModel(const Eigen::MatrixXf& X, int idf);
+    virtual ObserveModel_t observeModel(const Eigen::MatrixXf& X, int idf) = 0;
 
     /// @brief       format give angle
     ///
     /// @param [in]  angle
     /// @param [out] formated angle
-    float pi2Pi(float angle);
+    virtual float pi2Pi(float angle) = 0;
 
     /// @brief       Predict the prior state and covariance
     ///
@@ -351,13 +360,13 @@ class Slam
     /// @param [in]  wb - vehicle wheelbase
     /// @param [in]  dt - timestep
     /// @param [out] Xn, Pn - predicted state and covariance
-    void predict(Eigen::MatrixXf&       X,
-                 Eigen::MatrixXf&       P,
-                 const float&           v,
-                 const float&           swa,
-                 const Eigen::MatrixXf& Q,
-                 const float&           wb,
-                 const float&           dt);
+    virtual void predict(Eigen::MatrixXf&       X,
+                         Eigen::MatrixXf&       P,
+                         const float&           v,
+                         const float&           swa,
+                         const Eigen::MatrixXf& Q,
+                         const float&           wb,
+                         const float&           dt) = 0;
 
     /// @brief       instance update
     /// @param [in]  X - predicted slam state
@@ -366,11 +375,11 @@ class Slam
     /// @param [in]  R - measurement noise covariance
     /// @param [in]  IDF - feature index for each z
     /// @param [out] updated state and covariance
-    void singleUpdate(Eigen::MatrixXf&       X,
-                      Eigen::MatrixXf&       P,
-                      const Eigen::MatrixXf& Z,
-                      const Eigen::MatrixXf& R,
-                      const Eigen::MatrixXf& IDF);
+    virtual void singleUpdate(Eigen::MatrixXf&       X,
+                              Eigen::MatrixXf&       P,
+                              const Eigen::MatrixXf& Z,
+                              const Eigen::MatrixXf& R,
+                              const Eigen::MatrixXf& IDF) = 0;
 
     /// @brief       signum function
     ///
@@ -405,12 +414,12 @@ class Slam
     /// @param [in]  IDF - feature index for each z
     /// @param [in]  batch - switch to specify whether to process measurements together or sequentially
     /// @param [out] updated state and covariance
-    void update(Eigen::MatrixXf&       X,
-                Eigen::MatrixXf&       P,
-                const Eigen::MatrixXf& Z,
-                const Eigen::MatrixXf& R,
-                const Eigen::MatrixXf& IDF,
-                bool                   batch = false);
+    virtual void update(Eigen::MatrixXf&       X,
+                        Eigen::MatrixXf&       P,
+                        const Eigen::MatrixXf& Z,
+                        const Eigen::MatrixXf& R,
+                        const Eigen::MatrixXf& IDF,
+                        bool                   batch = false) = 0;
 
     /// @brief       compute vehicle pose
     /// @param [in]  X - vehicle pose [x;y;phi]
@@ -419,5 +428,16 @@ class Slam
     /// @param [in]  wb - wheelbase
     /// @param [in]  dt - change in time
     /// @param [out] new vehicle pose
-    void vehicleModel(Eigen::MatrixXf& X, const float& v, const float& swa, const float& wb, const float& dt);
+    virtual void
+        vehicleModel(Eigen::MatrixXf& X, const float& v, const float& swa, const float& wb, const float& dt) = 0;
+
+    // Miscellaneous
+    Eigen::MatrixXf getLandMarks() const
+    {
+        return mLM;
+    }
+    Eigen::MatrixXf getWayPoints() const
+    {
+        return mWP;
+    }
 };

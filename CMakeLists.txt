@@ -92,8 +92,9 @@ find_package(Eigen3 REQUIRED)
 set(CPACK_NSIS_CONTACT "rajiv.sithiravel@gmail.com")
 	
 set(SRC_LIST
-    slam/include/slam.h
-    slam/src/slam.cpp
+    slam/include/Slam.h
+	slam/include/EKF.h
+    slam/src/EKF.cpp
 )
 
 set(TEST_SRC_LIST
