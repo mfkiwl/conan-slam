@@ -9,7 +9,7 @@ from conan.tools.files import copy
 
 class Splinter(ConanFile):
     name = "slam"
-    version = "1.0"
+    version = "1.1"
     
     author = "Rajiv Sithiravel"
     
@@ -51,6 +51,7 @@ class Splinter(ConanFile):
             raise ConanInvalidConfiguration("This package is only compatible with Windows or Linux")
                                                                     
     def requirements(self):
+        self.requires("boost/1.84.0")
         self.requires("eigen/3.4.0")
            
     def build_requirements(self):

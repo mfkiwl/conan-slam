@@ -1,6 +1,6 @@
 # Initial setup
 cmake_minimum_required(VERSION 3.28.1)
-project(SLAM LANGUAGES CXX C VERSION 0.0.1)
+project(SLAM LANGUAGES CXX C VERSION 0.0.2)
 string(TOLOWER ${PROJECT_NAME} PROJECT_NAME_LOWER)
 set(CMAKE_CXX_STANDARD 20)
 
@@ -87,6 +87,7 @@ option(BUILD_SHARED_LIBS "Build using shared libraries" OFF)
 add_compile_definitions(_SILENCE_EXPERIMENTAL_FILESYSTEM_DEPRECATION_WARNING)
 endif(WINDOWS) 
 
+find_package(boost REQUIRED)
 find_package(Eigen3 REQUIRED)
 
 set(CPACK_NSIS_CONTACT "rajiv.sithiravel@gmail.com")
@@ -112,7 +113,7 @@ target_compile_options(${PROJECT_NAME_LOWER} PRIVATE "/Od")
 endif(WINDOWS)
 
 target_include_directories(${PROJECT_NAME_LOWER} PRIVATE ${PROJECT_SOURCE_DIR}/slam/include ${PROJECT_SOURCE_DIR}/test) 
-target_link_libraries(${PROJECT_NAME_LOWER} Eigen3::Eigen)
+target_link_libraries(${PROJECT_NAME_LOWER} boost::boost Eigen3::Eigen)
 
 if(CMAKE_BUILD_TYPE STREQUAL DEBUG)
     message("Detected compiler and platform:")
