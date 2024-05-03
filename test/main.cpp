@@ -10,6 +10,8 @@
 using Vector2f_t = Eigen::Vector2f;
 using Vector3f_t = Eigen::Vector3f;
 
+using namespace std;
+
 int main()
 {
     try
@@ -79,36 +81,36 @@ int main()
             WP(1, i) = wp2r[i];
         }
 
-        // perform landmarks based navigation (test)
-        std::shared_ptr<Slam> slam(new EKF(LM, WP));
-        if (slam != nullptr)
+        // perform EKF-SLAM landmarks based navigation (test)
+        std::shared_ptr<Slam> ekfSlam(new EKF(LM, WP));
+
+        if (ekfSlam != nullptr && true)
         {
 
             Eigen::MatrixXf Q = Eigen::MatrixXf::Zero(2, 2);
-            Q(0, 0)           = std::pow(slam->mSigmaV, 2.0F);
+            Q(0, 0)           = std::pow(ekfSlam->mSigmaV, 2.0F);
             Q(0, 1)           = 0.0F;
             Q(1, 0)           = 0.0F;
-            Q(1, 1)           = std::pow(slam->mSigmaSWA, 2.0F);
+            Q(1, 1)           = std::pow(ekfSlam->mSigmaSWA, 2.0F);
 
             Eigen::MatrixXf R = Eigen::MatrixXf::Zero(2, 2);
-            R(0, 0)           = std::pow(slam->mSigmaR, 2.0F);
+            R(0, 0)           = std::pow(ekfSlam->mSigmaR, 2.0F);
             R(0, 1)           = 0.0F;
             R(1, 0)           = 0.0F;
-            R(1, 1)           = std::pow(slam->mSigmaB, 2.0F);
+            R(1, 1)           = std::pow(ekfSlam->mSigmaB, 2.0F);
 
             // initialise states
-            Eigen::MatrixXf XTrue = Eigen::MatrixXf::Zero(3, 1);
-            Eigen::MatrixXf X     = Eigen::MatrixXf::Zero(3, 1);
+            Eigen::VectorXf XTrue = Eigen::VectorXf::Zero(3);
+            Eigen::VectorXf X     = Eigen::VectorXf::Zero(3);
             Eigen::MatrixXf P     = Eigen::MatrixXf::Zero(3, 3);
 
-            auto            dt    = slam->mDtControls; // change in time between predicts
-            float           dtsum = 0.0F;              // change in time since last observation
-            Eigen::MatrixXf FeatureTag =
-                Eigen::MatrixXf::Zero(1, slam->getLandMarks().cols()); // identifier for each landmark
-            for (int id = 0; id < slam->getLandMarks().cols(); id++)
-            {
-                FeatureTag(0, id) = static_cast<float>(id) + 1.0F;
-            }
+            double dt    = ekfSlam->mDtControls; // change in time between predicts
+            double dtsum = 0.0F;                 // change in time since last observation
+
+            // identifier for each landmark
+            Eigen::VectorXi FeatureTag = Eigen::VectorXi::Zero(ekfSlam->getLandMarks().cols());
+            int             index      = 0;
+            std::transform(FeatureTag.begin(), FeatureTag.end(), FeatureTag.begin(), [&](int& i) { return ++index; });
 
             int   iwp = 1;    //  index of first waypoint
             float swa = 0.0F; // initial steering wheel angle
@@ -117,64 +119,83 @@ int main()
             Eigen::MatrixXf RE = R;
 
             // inflate estimated noises (ie, add stabilising noise)
-            if (slam->mSwitchInflateNoise)
+            if (ekfSlam->mSwitchInflateNoise)
             {
                 QE = 2 * Q;
                 RE = 8 * R;
             }
 
-            while (iwp <= slam->getWayPoints().cols() && iwp > 0)
+            int indexlooper = 0;
+            while (iwp <= ekfSlam->getWayPoints().cols() && iwp > 0)
             {
+                std::cout << "indexlooper" << "\t" << ++indexlooper << std::endl;
+                std::cout << "X" << std::endl;
+                std::cout << X.transpose() << std::endl;
+                std::cout << "\n" << std::endl;
+
                 // compute steering wheel angle
-                slam->computeSWA(
-                    XTrue, slam->getWayPoints(), iwp, slam->mAtWaypoint, swa, slam->mRateSWA, slam->mMaxSWA, dt);
+                ekfSlam->computeSWA(XTrue,
+                                    ekfSlam->getWayPoints(),
+                                    iwp,
+                                    ekfSlam->mAtWaypoint,
+                                    swa,
+                                    ekfSlam->mRateSWA,
+                                    ekfSlam->mMaxSWA,
+                                    dt);
 
                 // perform loops : if final waypoint reached, go back to first
-                if (iwp == 0 && slam->mNumberLoops > 1)
+                if (iwp == 0 && ekfSlam->mNumberLoops > 1)
                 {
-                    iwp                = 1;
-                    slam->mNumberLoops = slam->mNumberLoops - 1;
+                    iwp                   = 1;
+                    ekfSlam->mNumberLoops = ekfSlam->mNumberLoops - 1;
                 }
 
-                slam->vehicleModel(
-                    XTrue, slam->mVelocity, swa, slam->mWheelBase, dt); // movment of the platform(Odo meter reading)
+                ekfSlam->vehicleModel(XTrue,
+                                      ekfSlam->mVelocity,
+                                      swa,
+                                      ekfSlam->mWheelBase,
+                                      dt); // movment of the platform(Odo meterreading)
 
-                auto [vn, swan] = slam->addControlNoise(slam->mVelocity, swa, Q, slam->mSwitchControlNoise);
+                auto [vn, swan] = ekfSlam->addControlNoise(ekfSlam->mVelocity, swa, Q, ekfSlam->mSwitchControlNoise);
 
                 // EKF predict
-                slam->predict(X, P, vn, swan, QE, slam->mWheelBase, dt);
+                ekfSlam->predict(X, P, vn, swan, QE, ekfSlam->mWheelBase, dt);
 
                 // if heading known, observe heading
-                slam->observeHeading(X, P, XTrue(2), slam->mSwitchHeadingKnown);
+                ekfSlam->observeHeading(X, P, XTrue(2), ekfSlam->mSwitchHeadingKnown);
 
                 // EKF update step
                 dtsum = dtsum + dt;
-                if (dtsum >= slam->mDtObserve)
+                if (dtsum >= ekfSlam->mDtObserve)
                 {
                     dtsum = 0.0F;
 
                     auto [Z, FeatureTagVisible] =
-                        slam->getObservations(XTrue, slam->getLandMarks(), FeatureTag, slam->mMaxRange);
+                        ekfSlam->getObservations(XTrue, ekfSlam->getLandMarks(), FeatureTag, ekfSlam->mMaxRange);
 
-                    slam->addObservationNoise(Z, R, slam->mSwitchSensorNoise);
+                    ekfSlam->addObservationNoise(Z, R, ekfSlam->mSwitchSensorNoise);
 
-                    if (slam->mSwitchAssociationKnown)
+                    if (Z.size() > 0)
                     {
+                        if (ekfSlam->mSwitchAssociationKnown)
+                        {
 
-                        auto [ZF, ZN, IDF] = slam->dataAssociateTable(X, Z, FeatureTagVisible, slam->mTABLE);
-                        slam->update(X, P, ZF, RE, IDF, slam->mSwitchBatchUpdate);
-                        slam->augment(X, P, ZN, RE);
-                    }
-                    else
-                    {
-                        auto [ZF, ZN, IDF] = slam->dataAssociate(X, P, Z, RE, slam->mGateReject, slam->mGateAugment);
-                        slam->update(X, P, ZF, RE, IDF, slam->mSwitchBatchUpdate);
-                        slam->augment(X, P, ZN, RE);
+                            auto [ZF, ZN, IDF] = ekfSlam->dataAssociateTable(X, Z, FeatureTagVisible, ekfSlam->mTABLE);
+
+                            ekfSlam->update(X, P, ZF, RE, IDF, ekfSlam->mSwitchBatchUpdate);
+                            ekfSlam->augment(X, P, ZN, RE);
+                        }
+                        else
+                        {
+                            auto [ZF, ZN, IDF] =
+                                ekfSlam->dataAssociate(X, P, Z, RE, ekfSlam->mGateReject, ekfSlam->mGateAugment);
+                            ekfSlam->update(X, P, ZF, RE, IDF.transpose(), ekfSlam->mSwitchBatchUpdate);
+                            ekfSlam->augment(X, P, ZN, RE);
+                        }
                     }
                 }
             }
         }
-        slam.reset();
     }
     catch (std::exception& e)
     {

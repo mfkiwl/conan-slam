@@ -3,37 +3,10 @@
 EKF::EKF(const Eigen::MatrixXf& landMarks, const Eigen::MatrixXf& wayPoints)
     : Slam(landMarks, wayPoints)
 {
-    mTABLE = Eigen::MatrixXf::Zero(1, getLandMarks().cols());
+    mTABLE = Eigen::VectorXi::Zero(getLandMarks().cols());
 }
 
-EKF::ControlNoiseState_t
-    EKF::addControlNoise(const float& v, const float& swa, const Eigen::MatrixXf& Q, bool additiveNoise)
-{
-    float iv   = v;
-    float iswa = swa;
-    if (additiveNoise)
-    {
-        iv   = iv + generateRandomNumer<float>(mVelocityNoiseLowerBound, mVelocityNoiseUpperBound) * std::sqrt(Q(0, 0));
-        iswa = iswa + generateRandomNumer<float>(mSwaNoiseLowerBound, mSwaNoiseUpperBound) * std::sqrt(Q(1, 1));
-    }
-    return {iv, iswa};
-}
-
-void EKF::addObservationNoise(Eigen::MatrixXf& Z, const Eigen::MatrixXf& R, bool additiveNoise)
-{
-    if (additiveNoise && (Z.cols() > 0))
-    {
-        for (int col = 0; col < Z.cols(); col++)
-        {
-            Z(0, col) = Z(0, col) + (generateRandomNumer<float>(mVelocityNoiseLowerBound, mVelocityNoiseUpperBound) *
-                                     std::sqrt(R(0, 0)));
-            Z(1, col) =
-                Z(1, col) + (generateRandomNumer<float>(mSwaNoiseLowerBound, mSwaNoiseUpperBound) * std::sqrt(R(1, 1)));
-        }
-    }
-}
-
-void EKF::augment(Eigen::MatrixXf& X, Eigen::MatrixXf& P, const Eigen::MatrixXf& Z, const Eigen::MatrixXf& R)
+void EKF::augment(Eigen::VectorXf& X, Eigen::MatrixXf& P, const Eigen::MatrixXf& Z, const Eigen::MatrixXf& R)
 {
     try
     {
@@ -52,21 +25,22 @@ void EKF::augment(Eigen::MatrixXf& X, Eigen::MatrixXf& P, const Eigen::MatrixXf&
     }
 }
 
-void EKF::addOneNewFeature(Eigen::MatrixXf& X, Eigen::MatrixXf& P, const Eigen::MatrixXf& Z, const Eigen::MatrixXf& R)
+void EKF::addOneNewFeature(Eigen::VectorXf& X, Eigen::MatrixXf& P, const Eigen::MatrixXf& Z, const Eigen::MatrixXf& R)
 {
     try
     {
-        int  len = std::max(X.rows(), X.cols());
-        auto r   = Z(0, 0);
-        auto b   = Z(1, 0);
-        auto s   = std::sin(X(2, 0) + b);
-        auto c   = std::cos(X(2, 0) + b);
+        int len = X.rows();
+
+        auto r = Z(0, 0);
+        auto b = Z(1, 0);
+        auto s = std::sin(X(2, 0) + b);
+        auto c = std::cos(X(2, 0) + b);
 
         // augment X
         const auto AX = X;
-        X.resize(AX.rows() + 2, AX.cols());
-        X.setZero(X.rows(), X.cols());
-        X.block(0, 0, AX.rows(), AX.cols()) = AX;
+        X.resize(AX.rows() + 2);
+        X.setZero(X.rows());
+        X.block(0, 0, AX.rows(), 1) = AX;
         Eigen::MatrixXf SF;
         SF.resize(2, 1);
         SF.setZero(2, 1);
@@ -116,16 +90,16 @@ void EKF::addOneNewFeature(Eigen::MatrixXf& X, Eigen::MatrixXf& P, const Eigen::
     }
 }
 
-void EKF::batchUpdate(Eigen::MatrixXf&       X,
+void EKF::batchUpdate(Eigen::VectorXf&       X,
                       Eigen::MatrixXf&       P,
                       const Eigen::MatrixXf& Z,
                       const Eigen::MatrixXf& R,
-                      const Eigen::MatrixXf& IDF)
+                      const Eigen::VectorXi& idf)
 {
     try
     {
         int lenZ = Z.cols();
-        int lenX = std::max(X.rows(), X.cols());
+        int lenX = X.rows();
 
         Eigen::MatrixXf H  = Eigen::MatrixXf::Zero(2 * lenZ, lenX);
         Eigen::MatrixXf V  = Eigen::MatrixXf::Zero(2 * lenZ, 1);
@@ -133,20 +107,16 @@ void EKF::batchUpdate(Eigen::MatrixXf&       X,
 
         for (int i = 0; i < lenZ; i++)
         {
-            Eigen::MatrixXf L = Eigen::MatrixXf::Zero(1, 2);
-            L(0, 0)           = 2 * (i + 1) - 1;
-            L(0, 1)           = 2 * (i + 1);
+            auto [Zp, HT] = observeModel(X, idf(i));
 
-            auto [Zp, HT] = observeModel(X, IDF(i)); // LAST KNOWN PROBLEM IS HERE
-
-            H.block(L(0, 0) - 1, 0, L.cols(), H.cols()) = HT;
-
-            Eigen::MatrixXf VT = Eigen::MatrixXf::Zero(2, 1);
-            VT(0, 0)           = Z(0, i) - Zp(0, 0);
-            VT(1, 0)           = pi2Pi(Z(1, i) - Zp(1, 0));
-
-            V.block(L(0, 0) - 1, 0, L.cols(), 1) = VT;
-
+            Eigen::MatrixXf L                                      = Eigen::MatrixXf::Zero(1, 2);
+            L(0, 0)                                                = 2 * (i + 1) - 1;
+            L(0, 1)                                                = 2 * (i + 1);
+            H.block(L(0, 0) - 1, 0, L.cols(), H.cols())            = HT;
+            Eigen::MatrixXf VT                                     = Eigen::MatrixXf::Zero(2, 1);
+            VT(0, 0)                                               = Z(0, i) - Zp(0, 0);
+            VT(1, 0)                                               = pi2Pi(Z(1, i) - Zp(1, 0));
+            V.block(L(0, 0) - 1, 0, L.cols(), 1)                   = VT;
             RR.block(L(0, 0) - 1, L(0, 0) - 1, L.cols(), L.cols()) = R;
         }
 
@@ -158,136 +128,7 @@ void EKF::batchUpdate(Eigen::MatrixXf&       X,
     }
 }
 
-void EKF::choleskyUpdate(Eigen::MatrixXf&       X,
-                         Eigen::MatrixXf&       P,
-                         const Eigen::MatrixXf& V,
-                         const Eigen::MatrixXf& R,
-                         const Eigen::MatrixXf& H)
-{
-    try
-    {
-        Eigen::MatrixXf PHT = P * H.transpose();
-        Eigen::MatrixXf S   = H * PHT + R;
-
-        // note S matrix should be symmetric and pos-definite
-        S = makeSymmetric(S); // make symmetric
-
-        Eigen::MatrixXf             normTransform(S.rows(), S.cols());
-        Eigen::LLT<Eigen::MatrixXf> cholSolver(S);
-
-        if (cholSolver.info() == Eigen::Success)
-        {
-            normTransform = cholSolver.matrixL();
-        }
-        else // if S might be a pos-semi-definite
-        {
-            // use eigen solver
-            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXf> eigenSolver(S);
-            normTransform = eigenSolver.eigenvectors() * eigenSolver.eigenvalues().cwiseSqrt().asDiagonal();
-        }
-        Eigen::MatrixXf SCHOL(normTransform);
-        Eigen::MatrixXf W1 = PHT * SCHOL.inverse();
-        Eigen::MatrixXf W  = W1 * SCHOL.inverse().transpose();
-
-        X = X + W * V; // update
-        P = P - W1 * W1.transpose();
-    }
-    catch (std::exception& e)
-    {
-        std::cout << e.what() << "\t" << "choleskyUpdate" << std::endl;
-    }
-}
-
-void EKF::computeSWA(const Eigen::MatrixXf& X,
-                     const Eigen::MatrixXf& WP,
-                     int&                   iwp,
-                     const float&           minD,
-                     float&                 swa,
-                     const float&           rateSWA,
-                     const float&           maxSWA,
-                     const float&           dt)
-{
-    try
-    {
-        // determine if current waypoint reached
-        if (WP.cols() > 0)
-        {
-            Eigen::MatrixXf CWP = Eigen::MatrixXf::Zero(2, 1);
-            CWP(0, 0)           = WP(0, iwp - 1);
-            CWP(1, 0)           = WP(1, iwp - 1);
-
-            float d2 = std::pow((CWP(0, 0) - X(0, 0)), 2.0F) + std::pow((CWP(1, 0) - X(1, 0)), 2.0F);
-            if (d2 < std::pow(minD, 2.0F))
-            {
-                iwp = iwp + 1;       // switch to next
-                if (iwp > WP.cols()) // rached final waypoint, flag and return
-                {
-                    iwp = 0;
-                    return;
-                }
-
-                // next waypoint
-                CWP.setZero(CWP.rows(), CWP.cols());
-                CWP(0, 0) = WP(0, iwp - 1);
-                CWP(1, 0) = WP(1, iwp - 1);
-            }
-
-            // compute change in steering wheel angle to point towardss current waypoints
-            auto deltaG = pi2Pi(std::atan2(CWP(1, 0) - X(1, 0), CWP(0, 0) - X(0, 0)) - X(2, 0) - swa);
-
-            // limit rate
-            auto maxDelta = rateSWA * dt;
-            if (std::abs(deltaG) > maxDelta)
-            {
-                deltaG = maxDelta * sign<int>(deltaG);
-            }
-
-            // limit angle
-            swa = swa + deltaG;
-            if (std::abs(swa) > maxSWA)
-            {
-                swa = sign<int>(swa) * maxSWA;
-            }
-        }
-    }
-    catch (std::exception& e)
-    {
-        std::cout << e.what() << "\t" << "computeSteering" << std::endl;
-    }
-}
-
-Eigen::MatrixXf EKF::computeRangeBearing(const Eigen::MatrixXf& X, const Eigen::MatrixXf& LM)
-{
-    Eigen::MatrixXf Z = Eigen::MatrixXf::Zero(0, 0);
-    try
-    {
-        // Compute exact observation
-        std::vector<float> dx_v;
-        std::vector<float> dy_v;
-        for (int i = 0; i < LM.cols(); i++)
-        {
-            dx_v.push_back(LM(0, i) - X(0, 0));
-            dy_v.push_back(LM(1, i) - X(1, 0));
-        }
-        float phi = X(2, 0);
-
-        Z.resize(2, LM.cols());
-        Z = Eigen::MatrixXf::Zero(2, LM.cols());
-
-        for (int index = 0; index < dx_v.size(); index++)
-        {
-            Z(0, index) = std::sqrt(std::pow(dx_v[index], 2.0F) + std::pow(dy_v[index], 2.0F));
-            Z(1, index) = std::atan2(dy_v[index], dx_v[index]) - phi;
-        }
-    }
-    catch (std::exception& e)
-    {
-        std::cout << e.what() << "\t" << "computeRangeBearing" << std::endl;
-    }
-    return Z;
-}
-
-EKF::NormalizedInnovation_t EKF::computeAssociation(const Eigen::MatrixXf& X,
+EKF::NormalizedInnovation_t EKF::computeAssociation(const Eigen::VectorXf& X,
                                                     const Eigen::MatrixXf& P,
                                                     const Eigen::MatrixXf& Z,
                                                     const Eigen::MatrixXf& R,
@@ -302,112 +143,96 @@ EKF::NormalizedInnovation_t EKF::computeAssociation(const Eigen::MatrixXf& X,
     return {nis(0, 0), nd};
 }
 
-EKF::Association_t EKF::dataAssociateTable(const Eigen::MatrixXf& X,
+EKF::Association_t EKF::dataAssociateTable(const Eigen::VectorXf& X,
                                            const Eigen::MatrixXf& Z,
-                                           const Eigen::MatrixXf& IDZ,
-                                           Eigen::MatrixXf&       TABLE)
+                                           const Eigen::VectorXi& idz,
+                                           Eigen::VectorXi&       table)
 {
     Eigen::MatrixXf ZF;
-    Eigen::MatrixXf ZN;
-    Eigen::MatrixXf IDF;
-    Eigen::MatrixXf IDN;
-
     ZF.resize(0, 0);
+    ZF = Eigen::MatrixXf::Zero(0, 0);
+    Eigen::MatrixXf ZN;
     ZN.resize(0, 0);
-    IDF.resize(0, 0);
-    IDN.resize(0, 0);
+    ZN = Eigen::MatrixXf::Zero(0, 0);
+    Eigen::VectorXi idfo;
+    idfo.resize(0);
+    idfo = Eigen::VectorXi::Zero(0);
 
-    // find associations (zf) and new features (zn)
-    for (int i = 0; i < IDZ.cols(); i++)
+    try
     {
-        int id = IDZ(0, i);
-        if (TABLE(0, id - 1) == 0) // new feature
+        std::vector<Eigen::MatrixXf> ZFi = {};
+        std::vector<Eigen::MatrixXf> ZNi = {};
+        std::vector<int>             idf = {};
+        std::vector<int>             idn = {};
+
+        // find associations (zf) and new features (zn)
+        for (int i = 0; i < idz.rows(); i++)
         {
-
-            if (ZN.rows() == 0 && ZN.cols() == 0)
+            int id = idz(i);
+            if (table(id - 1) == 0) // new feature
             {
-                ZN.resize(2, 1);
-                ZN                   = Eigen::MatrixXf::Zero(2, 1);
-                ZN.block(0, 0, 2, 1) = Z.col(i); // Z.block(0, i, Z.rows(), 1);
+                ZNi.push_back(Z.col(i));
+                idn.push_back(id);
             }
             else
             {
-                const auto ZNT = ZN;
-                ZN.resize(ZNT.rows(), ZNT.cols() + 1);
-                ZN                            = Eigen::MatrixXf::Zero(ZNT.rows(), ZNT.cols() + 1);
-                ZN.block(0, 0, 2, ZNT.cols()) = ZNT;
-                ZN.block(0, ZNT.cols(), 2, 1) = Z.col(i); // Z.block(0, i, Z.rows(), 1);
-            }
-
-            if (IDN.rows() == 0 && IDN.cols() == 0)
-            {
-                IDN.resize(1, 1);
-                IDN       = Eigen::MatrixXf::Zero(1, 1);
-                IDN(0, 0) = id;
-            }
-            else
-            {
-                const auto IDNT = IDN;
-                IDN.resize(IDNT.rows(), IDNT.cols() + 1);
-                IDN                             = Eigen::MatrixXf::Zero(IDNT.rows(), IDNT.cols() + 1);
-                IDN.block(0, 0, 1, IDNT.cols()) = IDNT;
-                IDN(0, IDNT.cols())             = id;
+                ZFi.push_back(Z.col(i));
+                idf.push_back(table(id - 1));
             }
         }
-        else
-        {
-            if (ZF.rows() == 0 && ZF.cols() == 0)
-            {
-                ZF.resize(2, 1);
-                ZF                   = Eigen::MatrixXf::Zero(2, 1);
-                ZF.block(0, 0, 2, 1) = Z.col(i); // Z.block(0, i, Z.rows(), 1);
-            }
-            else
-            {
-                const auto ZFT = ZF;
-                ZF.resize(ZFT.rows(), ZFT.cols() + 1);
-                ZF                            = Eigen::MatrixXf::Zero(ZFT.rows(), ZFT.cols() + 1);
-                ZF.block(0, 0, 2, ZFT.cols()) = ZFT;
-                ZF.block(0, ZFT.cols(), 2, 1) = Z.col(i); // Z.block(0, i, Z.rows(), 1);
-            }
 
-            if (IDF.rows() == 0 && IDF.cols() == 0)
+        int index = 0;
+        if (ZFi.size() > 0)
+        {
+            ZF = Eigen::MatrixXf::Zero(2, ZFi.size());
+            for (const auto& elem : ZFi)
             {
-                IDF.resize(1, 1);
-                IDF       = Eigen::MatrixXf::Zero(1, 1);
-                IDF(0, 0) = TABLE(id - 1);
-            }
-            else
-            {
-                const auto IDFT = IDF;
-                IDF.resize(IDFT.rows(), IDFT.cols() + 1);
-                IDF                             = Eigen::MatrixXf::Zero(IDFT.rows(), IDFT.cols() + 1);
-                IDF.block(0, 0, 1, IDFT.cols()) = IDFT;
-                IDF(0, IDFT.cols())             = TABLE(id - 1);
+                ZF.block(0, index, 2, 1) = elem.block(0, 0, 2, 1);
+                index++;
             }
         }
+
+        if (ZNi.size() > 0)
+        {
+            ZN    = Eigen::MatrixXf::Zero(2, ZNi.size());
+            index = 0;
+            for (const auto& elem : ZNi)
+            {
+                ZN.block(0, index, 2, 1) = elem.block(0, 0, 2, 1);
+                index++;
+            }
+        }
+
+        if (idf.size() > 0)
+        {
+            idfo = Eigen::VectorXi::Zero(idf.size());
+            std::copy(idf.begin(), idf.end(), idfo.begin());
+        }
+
+        // add new feature IDs to lookup table
+        int nxv = 3;                       // number of vehicle pose states
+        int nf  = (X.rows() - nxv) / 2.0F; // number of features already in map
+
+        // add new feature positions to lookup table
+        std::vector<float> gatherNewPos = {};
+        for (int i = 1; i <= ZN.cols(); i++)
+        {
+            gatherNewPos.push_back(nf + i);
+        }
+        for (int i = 0; i < idn.size(); i++)
+        {
+            int id        = idn[i];
+            table(id - 1) = gatherNewPos.at(i);
+        }
     }
-
-    // add new feature IDs to lookup table
-    int   nxv = 3;                                           // number of vehicle pose states
-    float nf  = (std::max(X.rows(), X.cols()) - nxv) / 2.0F; // number of features already in map
-    // table(idn) = Nf + (1 : size(zn, 2)); // add new feature positions to lookup table
-
-    std::vector<float> temp = {};
-    for (int i = 1; i <= ZN.cols(); i++)
+    catch (std::exception& e)
     {
-        temp.push_back(nf + i);
+        std::cout << e.what() << "\t" << "dataAssociateTable" << std::endl;
     }
-    for (int i = 0; i < IDN.cols(); i++)
-    {
-        int id           = IDN(0, i);
-        TABLE(0, id - 1) = temp.at(i);
-    }
-
-    return {ZF, ZN, IDF};
+    return {ZF, ZN, idfo};
 }
 
-EKF::Association_t EKF::dataAssociate(const Eigen::MatrixXf& X,
+EKF::Association_t EKF::dataAssociate(const Eigen::VectorXf& X,
                                       const Eigen::MatrixXf& P,
                                       const Eigen::MatrixXf& Z,
                                       const Eigen::MatrixXf& R,
@@ -415,12 +240,14 @@ EKF::Association_t EKF::dataAssociate(const Eigen::MatrixXf& X,
                                       const float&           gate2)
 {
     Eigen::MatrixXf ZF;
-    Eigen::MatrixXf ZN;
-    Eigen::MatrixXf IDF;
-
     ZF.resize(0, 0);
+    ZF = Eigen::MatrixXf::Zero(0, 0);
+    Eigen::MatrixXf ZN;
     ZN.resize(0, 0);
-    IDF.resize(0, 0);
+    ZN = Eigen::MatrixXf::Zero(0, 0);
+    Eigen::VectorXi idfo;
+    idfo.resize(0);
+    idfo = Eigen::VectorXi::Zero(0);
 
     try
     {
@@ -429,6 +256,10 @@ EKF::Association_t EKF::dataAssociate(const Eigen::MatrixXf& X,
 
         // linear search for nearest-neighbour, no clever tricks (like a quick bounding - box threshold to remove
         // distant features; or, better yet, a balanced k-d tree lookup). TODO: implement clever tricks.
+        std::vector<Eigen::MatrixXf> ZFi = {};
+        std::vector<Eigen::MatrixXf> ZNi = {};
+        std::vector<int>             idf = {};
+
         for (int i = 0; i < Z.cols(); i++)
         {
             int   jbest = 0;
@@ -455,164 +286,46 @@ EKF::Association_t EKF::dataAssociate(const Eigen::MatrixXf& X,
             // add nearest-neighbour to association list
             if (jbest != 0.0F)
             {
-                if (ZF.rows() == 0 && ZF.cols() == 0)
-                {
-                    ZF.resize(2, 1);
-                    ZF                   = Eigen::MatrixXf::Zero(2, 1);
-                    ZF.block(0, 0, 2, 1) = Z.col(i); // Z.block(0, i, Z.rows(), 1);
-                }
-                else
-                {
-                    const auto ZFT = ZF;
-                    ZF.resize(ZFT.rows(), ZFT.cols() + 1);
-                    ZF                            = Eigen::MatrixXf::Zero(ZFT.rows(), ZFT.cols() + 1);
-                    ZF.block(0, 0, 2, ZFT.cols()) = ZFT;
-                    ZF.block(0, ZFT.cols(), 2, 1) = Z.col(i); // Z.block(0, i, Z.rows(), 1);
-                }
-
-                if (IDF.rows() == 0 && IDF.cols() == 0)
-                {
-                    IDF.resize(1, 1);
-                    IDF       = Eigen::MatrixXf::Zero(1, 1);
-                    IDF(0, 0) = jbest;
-                }
-                else
-                {
-                    const auto IDFT = IDF;
-                    IDF.resize(IDFT.rows(), IDFT.cols() + 1);
-                    IDF                             = Eigen::MatrixXf::Zero(IDFT.rows(), IDFT.cols() + 1);
-                    IDF.block(0, 0, 1, IDFT.cols()) = IDFT;
-                    IDF(0, IDFT.cols())             = jbest;
-                }
+                ZFi.push_back(Z.col(i));
+                idf.push_back(jbest);
             }
             else if (outer > gate2) // Z too far to associate, but far enough to be a new feature
             {
-                if (ZN.rows() == 0 && ZN.cols() == 0)
-                {
-                    ZN.resize(2, 1);
-                    ZN                   = Eigen::MatrixXf::Zero(2, 1);
-                    ZN.block(0, 0, 2, 1) = Z.col(i); // Z.block(0, i, Z.rows(), 1);
-                }
-                else
-                {
-                    const auto ZNT = ZN;
-                    ZN.resize(ZNT.rows(), ZNT.cols() + 1);
-                    ZN                            = Eigen::MatrixXf::Zero(ZNT.rows(), ZNT.cols() + 1);
-                    ZN.block(0, 0, 2, ZNT.cols()) = ZNT;
-                    ZN.block(0, ZNT.cols(), 2, 1) = Z.col(i); // Z.block(0, i, Z.rows(), 1);
-                }
+                ZNi.push_back(Z.col(i));
             }
         }
+
+        // eigen format
+        ZF.resize(0, 0);
+        ZF        = Eigen::MatrixXf::Zero(2, ZFi.size());
+        int index = 0;
+        for (const auto& elem : ZFi)
+        {
+            ZF.block(0, index, 2, 1) = elem.block(0, 0, 2, 1);
+            index++;
+        }
+
+        Eigen::MatrixXf ZN;
+        ZN.resize(0, 0);
+        ZN    = Eigen::MatrixXf::Zero(2, ZNi.size());
+        index = 0;
+        for (const auto& elem : ZNi)
+        {
+            ZN.block(0, index, 2, 1) = elem.block(0, 0, 2, 1);
+        }
+
+        idfo.resize(0);
+        idfo = Eigen::VectorXi::Zero(idf.size());
+        std::copy(idf.begin(), idf.end(), idfo.begin());
     }
     catch (std::exception& e)
     {
         std::cout << e.what() << "\t" << "dataAssociate" << std::endl;
     }
-    return {ZF, ZN, IDF};
+    return {ZF, ZN, idfo};
 }
 
-EKF::Observation_t EKF::getObservations(const Eigen::MatrixXf& X,
-                                        const Eigen::MatrixXf& LM,
-                                        const Eigen::MatrixXf& IDF,
-                                        const float&           rmax)
-{
-    auto [iLM, iIDF] = getVisibleLandmarks(X, LM, IDF, rmax);
-    return {computeRangeBearing(X, iLM), iIDF};
-}
-
-EKF::VisibleLandmarks_t EKF::getVisibleLandmarks(const Eigen::MatrixXf& X,
-                                                 const Eigen::MatrixXf& LM,
-                                                 const Eigen::MatrixXf& IDF,
-                                                 const float&           rmax)
-{
-    Eigen::MatrixXf iLM  = LM;
-    Eigen::MatrixXf iIDF = IDF;
-    try
-    {
-        std::vector<float> dx_v;
-        std::vector<float> dy_v;
-        for (int i = 0; i < LM.cols(); i++)
-        {
-            dx_v.push_back(LM(0, i) - X(0, 0));
-            dy_v.push_back(LM(1, i) - X(1, 0));
-        }
-        float phi = X(2, 0);
-
-        // incremental tests for bounding semi-circle
-        std::vector<float> dr_t;
-        std::fill(dr_t.begin(), dr_t.end(), 0);
-        int              counter = 0;
-        std::vector<int> tracker = {};
-        std::transform(dx_v.begin(),
-                       dx_v.end(),
-                       dy_v.begin(),
-                       std::back_inserter(dr_t),
-                       [&](float i, float j)
-                       {
-                           counter++;
-                           if ((std::abs(i) < rmax && std::abs(j) < rmax) &&                     // bounding box
-                               ((i * std::cos(phi) + j * std::sin(phi)) > 0) &&                  // bounding line
-                               ((std::pow(i, 2.0F) + std::pow(j, 2.0F)) < std::pow(rmax, 2.0F))) // bounding circle
-                           {
-                               tracker.push_back(counter);
-                               return counter;
-                           }
-                       });
-
-        // the bounding box test is unnecessary but illustrates a possible speedup technique as it quickly eliminates
-        // distant points.Ordering the landmark set would make this operation %O(logN) rather that O(N).
-        const auto LMT  = iLM;
-        const auto IDFT = iIDF;
-
-        iLM.resize(2, tracker.size());
-        iLM = Eigen::MatrixXf::Zero(2, tracker.size());
-
-        iIDF.resize(1, tracker.size());
-        iIDF = Eigen::MatrixXf::Zero(1, tracker.size());
-
-        int index = 0;
-        for (const auto& t : tracker)
-        {
-            iLM.block(0, index, 2, 1)  = LMT.block(0, t - 1, 2, 1);
-            iIDF.block(0, index, 1, 1) = IDFT.block(0, t - 1, 1, 1);
-            index++;
-        }
-    }
-    catch (std::exception& e)
-    {
-        std::cout << e.what() << "\t" << "getVisibleLandmarks" << std::endl;
-    }
-    return {iLM, iIDF};
-}
-
-void EKF::josephUpdate(Eigen::MatrixXf&       X,
-                       Eigen::MatrixXf&       P,
-                       const Eigen::MatrixXf& V,
-                       const Eigen::MatrixXf& R,
-                       const Eigen::MatrixXf& H)
-{
-    try
-    {
-        const auto      PHT = P * H.transpose();
-        Eigen::MatrixXf S   = H * PHT + R;
-        Eigen::MatrixXf SI  = S.inverse();
-        SI                  = makeSymmetric(SI);
-        Eigen::MatrixXf W   = PHT * SI;
-
-        X = X + W * V;
-
-        // Joseph-form covariance update
-        Eigen::MatrixXf C = Eigen::MatrixXf::Identity(P.rows(), P.cols()) - W * H;
-        P                 = C * P * C.transpose() + W * R * W.transpose();
-        P                 = P + Eigen::MatrixXf::Identity(P.rows(), P.cols()) * std::numeric_limits<float>::min();
-    }
-    catch (std::exception& e)
-    {
-        std::cout << e.what() << "\t" << "josephUpdate" << std::endl;
-    }
-}
-
-void EKF::observeHeading(Eigen::MatrixXf& X, Eigen::MatrixXf& P, const float& phi, bool useHeading)
+void EKF::observeHeading(Eigen::VectorXf& X, Eigen::MatrixXf& P, const float& phi, bool useHeading)
 {
     try
     {
@@ -622,11 +335,11 @@ void EKF::observeHeading(Eigen::MatrixXf& X, Eigen::MatrixXf& P, const float& ph
         }
         // heading uncertainty - radians
         float           sigmaPhi = 0.01F * std::_Pi_val / 180.0F; // radians, heading uncertainty
-        Eigen::MatrixXf H        = Eigen::MatrixXf::Zero(1, std::max(X.rows(), X.cols()));
+        Eigen::MatrixXf H        = Eigen::MatrixXf::Zero(1, X.rows());
         H(0, 2)                  = 1.0F;
 
-        Eigen::MatrixXf V = Eigen::MatrixXf::Zero(1, 1);
-        V(0, 0)           = pi2Pi(phi - X(2, 0));
+        Eigen::VectorXf V = Eigen::VectorXf::Zero(1);
+        V(0)              = pi2Pi(phi - X(2));
 
         Eigen::MatrixXf R = Eigen::MatrixXf::Zero(1, 1);
         R(0, 0)           = std::pow(sigmaPhi, 2.0F);
@@ -638,12 +351,12 @@ void EKF::observeHeading(Eigen::MatrixXf& X, Eigen::MatrixXf& P, const float& ph
     }
 }
 
-EKF::ObserveModel_t EKF::observeModel(const Eigen::MatrixXf& X, int idf)
+EKF::ObserveModel_t EKF::observeModel(const Eigen::VectorXf& X, int idf)
 {
     int nxv  = 3;                   // number of vehicle pose states
     int fpos = nxv + (idf * 2) - 1; // position of xf in state
 
-    Eigen::MatrixXf H = Eigen::MatrixXf::Zero(2, std::max(X.rows(), X.cols()));
+    Eigen::MatrixXf H = Eigen::MatrixXf::Zero(2, X.rows());
     Eigen::MatrixXf Z = Eigen::MatrixXf::Zero(2, 1);
 
     try
@@ -651,8 +364,8 @@ EKF::ObserveModel_t EKF::observeModel(const Eigen::MatrixXf& X, int idf)
         if (X.rows() > 3)
         {
             // auxiliary values
-            float dx  = X(fpos - 1, 0) - X(0, 0);
-            float dy  = X(fpos, 0) - X(1, 0);
+            float dx  = X(fpos - 1) - X(0);
+            float dy  = X(fpos) - X(1);
             float d2  = std::pow(dx, 2.0F) + std::pow(dy, 2.0F);
             float d   = std::sqrt(d2);
             float xd  = dx / d;
@@ -662,7 +375,7 @@ EKF::ObserveModel_t EKF::observeModel(const Eigen::MatrixXf& X, int idf)
 
             // predict Z
             Z(0, 0) = d;
-            Z(1, 0) = std::atan2(dy, dx) - X(2, 0);
+            Z(1, 0) = std::atan2(dy, dx) - X(2);
 
             // calculate H
             Eigen::MatrixXf HU = Eigen::MatrixXf::Zero(2, 3);
@@ -690,22 +403,7 @@ EKF::ObserveModel_t EKF::observeModel(const Eigen::MatrixXf& X, int idf)
     return {Z, H};
 }
 
-float EKF::pi2Pi(float angle)
-{
-    angle = std::fmod(angle, static_cast<float>(2 * std::_Pi_val));
-    if (angle > std::_Pi_val)
-    {
-        angle = angle - (2.0F * std::_Pi_val);
-    }
-    if (angle < -std::_Pi_val)
-    {
-        angle = angle + (2 * std::_Pi_val);
-    }
-
-    return angle;
-}
-
-void EKF::predict(Eigen::MatrixXf&       X,
+void EKF::predict(Eigen::VectorXf&       X,
                   Eigen::MatrixXf&       P,
                   const float&           v,
                   const float&           swa,
@@ -715,28 +413,25 @@ void EKF::predict(Eigen::MatrixXf&       X,
 {
     try
     {
-        float s   = std::sin(swa + X(2, 0));
-        float c   = std::cos(swa + X(2, 0));
-        float vts = v * dt * s;
-        float vtc = v * dt * c;
+        float phi = X(2);
 
         // jacobians
         Eigen::MatrixXf Gv = Eigen::MatrixXf::Zero(3, 3);
         Gv(0, 0)           = 1.0F;
         Gv(0, 1)           = 0.0F;
-        Gv(0, 2)           = -vts;
+        Gv(0, 2)           = -v * dt * std::sin(swa + phi);
         Gv(1, 0)           = 0.0F;
         Gv(1, 1)           = 1.0F;
-        Gv(1, 2)           = vtc;
+        Gv(1, 2)           = v * dt * std::cos(swa + phi);
         Gv(2, 0)           = 0.0F;
         Gv(2, 1)           = 0.0F;
         Gv(2, 2)           = 1.0F;
 
         Eigen::MatrixXf Gu = Eigen::MatrixXf::Zero(3, 2);
-        Gu(0, 0)           = dt * c;
-        Gu(0, 1)           = -vts;
-        Gu(1, 0)           = dt * s;
-        Gu(1, 1)           = vtc;
+        Gu(0, 0)           = dt * std::cos(swa + phi);
+        Gu(0, 1)           = -v * dt * std::sin(swa + phi);
+        Gu(1, 0)           = dt * std::sin(swa + phi);
+        Gu(1, 1)           = v * dt * std::cos(swa + phi);
         Gu(2, 0)           = dt * std::sin(swa) / wb;
         Gu(2, 1)           = v * dt * std::cos(swa) / wb;
 
@@ -749,9 +444,9 @@ void EKF::predict(Eigen::MatrixXf&       X,
         }
 
         // predicted state
-        X(0, 0) = X(0, 0) + vtc;
-        X(1, 0) = X(1, 0) + vts;
-        X(2, 0) = pi2Pi(X(2, 0) + v * dt * std::sin(swa) / wb);
+        X(0) = X(0) + v * dt * std::cos(swa + phi);
+        X(1) = X(1) + v * dt * std::sin(swa + phi);
+        X(2) = pi2Pi(X(2) + v * dt * std::sin(swa) / wb);
     }
     catch (std::exception& e)
     {
@@ -759,23 +454,21 @@ void EKF::predict(Eigen::MatrixXf&       X,
     }
 }
 
-void EKF::singleUpdate(Eigen::MatrixXf&       X,
+void EKF::singleUpdate(Eigen::VectorXf&       X,
                        Eigen::MatrixXf&       P,
                        const Eigen::MatrixXf& Z,
                        const Eigen::MatrixXf& R,
-                       const Eigen::MatrixXf& IDF)
+                       const Eigen::VectorXi& idf)
 {
     try
     {
         int lenZ = Z.cols();
         for (int i = 0; i < lenZ; i++)
         {
-            auto [Zp, H] = observeModel(X, IDF(0, i));
-
+            auto [Zp, H]      = observeModel(X, idf(i));
             Eigen::MatrixXf V = Eigen::MatrixXf::Zero(2, 1);
             V(0, 0)           = Z(0, i) - Zp(0, 0);
             V(1, 0)           = pi2Pi(Z(1, i) - Zp(1, 0));
-
             choleskyUpdate(X, P, V, R, H);
         }
     }
@@ -785,35 +478,19 @@ void EKF::singleUpdate(Eigen::MatrixXf&       X,
     }
 }
 
-void EKF::update(Eigen::MatrixXf&       X,
+void EKF::update(Eigen::VectorXf&       X,
                  Eigen::MatrixXf&       P,
                  const Eigen::MatrixXf& Z,
                  const Eigen::MatrixXf& R,
-                 const Eigen::MatrixXf& IDF,
+                 const Eigen::VectorXi& idf,
                  bool                   batch)
 {
     if (batch)
     {
-        batchUpdate(X, P, Z, R, IDF);
+        batchUpdate(X, P, Z, R, idf);
     }
     else
     {
-        singleUpdate(X, P, Z, R, IDF);
-    }
-}
-
-void EKF::vehicleModel(Eigen::MatrixXf& X, const float& v, const float& swa, const float& wb, const float& dt)
-{
-    try
-    {
-        const auto TX = X;
-        X.setZero(X.rows(), X.cols());
-        X(0, 0) = TX(0, 0) + v * dt * std::cos(swa + TX(2, 0));
-        X(1, 0) = TX(1, 0) + v * dt * std::sin(swa + TX(2, 0));
-        X(2, 0) = pi2Pi(TX(2, 0) + v * dt * std::sin(swa) / wb);
-    }
-    catch (std::exception& e)
-    {
-        std::cout << e.what() << "\t" << "vehicleModel" << std::endl;
+        singleUpdate(X, P, Z, R, idf);
     }
 }

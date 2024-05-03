@@ -13,27 +13,15 @@ class EKF : public Slam
     EKF(const Eigen::MatrixXf& landMarks, const Eigen::MatrixXf& wayPoints);
     ~EKF() = default;
 
-    /// @brief       add random noise to nominal control values
+    /// @brief       add a new features to state
     ///
-    /// @param [in]  v - host velocity [m/s]
-    /// @param [in]  swa - steering wheel angle (SWA) [rad]
-    /// @param [in]  Q - system noise covariance
-    /// @param [in]  addNoise - include additive noise or not, by default no
-    /// @param [out] ControlNoiseState_t - v with noise and swa with noises
-    /// @note        Assume Q is diagonal
-    ControlNoiseState_t addControlNoise(const float&           v,
-                                        const float&           swa,
-                                        const Eigen::MatrixXf& Q,
-                                        bool                   additiveNoise = false) override;
-
-    /// @brief       add random measurement noise
-    ///
-    /// @param [in]  Z - measurements
+    /// @param [in]  particle prior system states and state covariances
+    /// @param [in]  Z - range-bearing measurements
     /// @param [in]  R - measurement noise covariance
-    /// @param [in]  addNoise - include additive noise or not, by default no
-    /// @param [out] Z - measurements
-    /// @note        Assume R is diagonal
-    void addObservationNoise(Eigen::MatrixXf& Z, const Eigen::MatrixXf& R, bool additiveNoise = false) override;
+    /// @param [out] particle augmentd system states and state covariances
+    void addOneNewFeature(Particle_t& particle, const Eigen::MatrixXf& Z, const Eigen::MatrixXf& R) override
+    {
+    }
 
     /// @brief       augment slam's state and covariance
     ///
@@ -45,7 +33,7 @@ class EKF : public Slam
     /// @param [out] P - augmented covariance
     /// @note        assume the number of vehicle pose states is three, Only one value for R is used, as all
     /// measurements are assumed to have same noise properties
-    void augment(Eigen::MatrixXf& X, Eigen::MatrixXf& P, const Eigen::MatrixXf& Z, const Eigen::MatrixXf& R) override;
+    void augment(Eigen::VectorXf& X, Eigen::MatrixXf& P, const Eigen::MatrixXf& Z, const Eigen::MatrixXf& R) override;
 
     /// @brief       add a new features to state
     ///
@@ -55,7 +43,7 @@ class EKF : public Slam
     /// @param [in]  R - measurement noise covariance
     /// @param [out] X - augmented state
     /// @param [out] P - augmented covariance
-    void addOneNewFeature(Eigen::MatrixXf&       X,
+    void addOneNewFeature(Eigen::VectorXf&       X,
                           Eigen::MatrixXf&       P,
                           const Eigen::MatrixXf& Z,
                           const Eigen::MatrixXf& R) override;
@@ -67,54 +55,11 @@ class EKF : public Slam
     /// @param [in]  R - measurement noise covariance
     /// @param [in]  IDF - feature index for each z
     /// @param [out] updated state and covariance
-    void batchUpdate(Eigen::MatrixXf&       X,
+    void batchUpdate(Eigen::VectorXf&       X,
                      Eigen::MatrixXf&       P,
                      const Eigen::MatrixXf& Z,
                      const Eigen::MatrixXf& R,
-                     const Eigen::MatrixXf& IDF) override;
-
-    /// @brief       calculate the EKF update given the prior state [X,P]
-    ///
-    /// @param [in]  X - prior system state
-    /// @param [in]  P - prior system covariances
-    /// @param [in]  V - innovation
-    /// @param [in]  R - measurement noise covariance
-    /// @param [in]  H - linearised observation model
-    /// @param [out] updated mean and covariances
-    /// @note        the(linearised) observation model H. The result is calculated using Cholesky factorisation, which
-    /// is more numerically stable than a naive implementation.
-    void choleskyUpdate(Eigen::MatrixXf&       X,
-                        Eigen::MatrixXf&       P,
-                        const Eigen::MatrixXf& V,
-                        const Eigen::MatrixXf& R,
-                        const Eigen::MatrixXf& H) override;
-
-    /// @brief       compute steering wheel angle
-    ///
-    /// @param [in]  X - slam state
-    /// @param [in]  WP - waypoints
-    /// @param [in]  iwp - index to current waypoint
-    /// @param [in]  minD - minimum distance to current waypoint before switching to next
-    /// @param [in]  swa - current steering wheel angle
-    /// @param [in]  rateSWA - max steering rate (rad/s)
-    /// @param [in]  maxSWA - max steering angle (rad)
-    /// @param [in]  dt - timestep
-    /// @param [out] swa - new current wheel steering angle and iwp - new current waypoint
-    void computeSWA(const Eigen::MatrixXf& X,
-                    const Eigen::MatrixXf& WP,
-                    int&                   iwp,
-                    const float&           minD,
-                    float&                 swa,
-                    const float&           rateSWA,
-                    const float&           maxSWA,
-                    const float&           dt) override;
-
-    /// @brief       compute range and bearing
-    ///
-    /// @param [in]  X - vehicle pose [x;y;phi]
-    /// @param [in]  LM - set of all landmarks
-    /// @param [out] Observation_t - set of range-bearing observations
-    Eigen::MatrixXf computeRangeBearing(const Eigen::MatrixXf& X, const Eigen::MatrixXf& LM) override;
+                     const Eigen::VectorXi& IDF) override;
 
     /// @brief       compute data association
     ///
@@ -125,11 +70,32 @@ class EKF : public Slam
     /// @param [in]  idf - extracted features id
     /// @param [out] NormalizedInnovation_t - return normalised innovation squared (ie, Mahalanobis distance) and
     /// normalised distance
-    NormalizedInnovation_t computeAssociation(const Eigen::MatrixXf& X,
+    NormalizedInnovation_t computeAssociation(const Eigen::VectorXf& X,
                                               const Eigen::MatrixXf& P,
                                               const Eigen::MatrixXf& Z,
                                               const Eigen::MatrixXf& R,
                                               int                    idf) override;
+
+    /// @brief       compute innovation between two state estimates, normalizing the heading components.
+    ///
+    /// @param [in] states
+    /// @param [out] innovation
+    Eigen::MatrixXf computeDelta(const Eigen::MatrixXf& X1, const Eigen::MatrixXf& X2) override
+    {
+        return {};
+    }
+
+    /// @brief       compute Jacobian
+    ///
+    /// @param [in]  particle system states and state covariances
+    /// @param [in]  IDF - index tags for each landmark
+    /// @param [in]  R - measurement noise covariance
+    /// @param [out] Jacobians
+    Jacobians_t
+        computeJacobians(const Particle_t& particle, const Eigen::VectorXi& idf, const Eigen::MatrixXf& R) override
+    {
+        return {};
+    }
 
     /// @brief       For simulations with known data-associations, this function maintains a feature / observation
     /// lookup table.It returns the updated table,the set of associated observations and the set of observations to new
@@ -140,10 +106,27 @@ class EKF : public Slam
     /// @param [in]  IDZ - associted id with meas
     /// @param [in]  TABLE - feature/observation lookup table
     /// @param [out] Association_t - data associated information
-    Association_t dataAssociateTable(const Eigen::MatrixXf& X,
+    Association_t dataAssociateTable(const Eigen::VectorXf& X,
                                      const Eigen::MatrixXf& Z,
-                                     const Eigen::MatrixXf& IDZ,
-                                     Eigen::MatrixXf&       TABLE) override;
+                                     const Eigen::VectorXi& idz,
+                                     Eigen::VectorXi&       table) override;
+
+    /// @brief       For simulations with known data-associations, this function maintains a feature / observation
+    /// lookup table.It returns the updated table,the set of associated observations and the set of observations to new
+    /// features
+    ///
+    /// @param [in]  Z - range-bearing measurements
+    /// @param [in]  IDZ - associted id with meas
+    /// @param [in]  TABLE - feature/observation lookup table
+    /// @param [in]  numParticles - number of particles
+    /// @param [out] Association_t - data associated information
+    Association_t dataAssociateTable(const Eigen::MatrixXf& Z,
+                                     const Eigen::VectorXi& idz,
+                                     Eigen::VectorXi&       table,
+                                     int                    numParticles) override
+    {
+        return {};
+    }
 
     /// @brief       Simple gated nearest-neighbour data-association. No clever feature caching tricks to speed up
     /// association, so computation is O(N), where N is the number of features in the state
@@ -154,52 +137,72 @@ class EKF : public Slam
     /// @param [in]  R - measurement noise covariance
     /// @param [in]  gate1 and 2 - nearest-neighbour gates
     /// @param [out] Association_t - data associated information
-    Association_t dataAssociate(const Eigen::MatrixXf& X,
+    Association_t dataAssociate(const Eigen::VectorXf& X,
                                 const Eigen::MatrixXf& P,
                                 const Eigen::MatrixXf& Z,
                                 const Eigen::MatrixXf& R,
                                 const float&           gate1,
                                 const float&           gate2) override;
 
-    /// @brief       compute observation
+    /// @brief       Having selected a new pose from the proposal distribution, this pose is assumed perfect and each
+    ///              feature update may be computed independently and without pose uncertainty.
     ///
-    /// @param [in]  X - vehicle pose [x;y;phi]
-    /// @param [in]  LM - set of all landmarks
+    /// @param [in]  particle system states and state covariances
+    /// @param [in]  Z - range-bearing measurements
     /// @param [in]  IDF - index tags for each landmark
-    /// @param [in]  rmax - maximum range of range-bearing sensor
-    /// @param [out] Observation_t - set of range-bearing observations & landmark index tag for each observation
-    Observation_t getObservations(const Eigen::MatrixXf& X,
-                                  const Eigen::MatrixXf& LM,
-                                  const Eigen::MatrixXf& IDF,
-                                  const float&           rmax) override;
-
-    /// @brief       select set of landmarks that are visible within vehicle's semi-circular field-of-view
-    ///
-    /// @param [in]  X - vehicle pose [x;y;phi]
-    /// @param [in]  LM - set of all landmarks
-    /// @param [in]  IDF - index tags for each landmark
-    /// @param [in]  rmax - maximum range of range-bearing sensor
-    /// @param [out] VisibleLandmarks_t set & landmark index tag for each observation
-    VisibleLandmarks_t getVisibleLandmarks(const Eigen::MatrixXf& X,
-                                           const Eigen::MatrixXf& LM,
-                                           const Eigen::MatrixXf& IDF,
-                                           const float&           rmax) override;
-
-    /// @brief       joseph update
-    ///
-    /// @param [in]  X - prior system state
-    /// @param [in]  P - prior system covariances
-    /// @param [in]  V - innovation
     /// @param [in]  R - measurement noise covariance
-    /// @param [in]  H - linearised observation model
-    /// @param [out] updated mean and covariances
-    /// @note        This module is identical to KF_simple_update() except that it uses the Joseph - form covariance
-    /// update, as shown in Bar - Shalom "Estimation with Applications...", 2001,p302.
-    void josephUpdate(Eigen::MatrixXf&       X,
-                      Eigen::MatrixXf&       P,
-                      const Eigen::MatrixXf& V,
-                      const Eigen::MatrixXf& R,
-                      const Eigen::MatrixXf& H) override;
+    /// @param [out] updated state and covariance of particles
+    void featureUpdate(Particle_t&            particle,
+                       const Eigen::MatrixXf& Z,
+                       const Eigen::VectorXi& idf,
+                       const Eigen::MatrixXf& R) override
+    {
+    }
+
+    /// @brief       Gaussian evaluvation
+    ///
+    /// @param [in]  V - a set of innovation vectors
+    /// @param [in]  S - covariance matrix for the innovation
+    /// @param [in]  logFlag - if 1 computes the log-likelihood, otherwise computes the likelihood.
+    /// @param [out] set of Gaussian likelihoods or log-likelihood for each V elements
+    float gaussEvaluate(const Eigen::VectorXf& V, const Eigen::MatrixXf& S, bool logFlag = false) override
+    {
+        return 0;
+    }
+
+    /// @brief       initialize the particles
+    ///
+    /// @param [out] prior state and covariances
+    std::vector<Particle_t> initializeParticles(int numParticles) override
+    {
+        return {};
+    }
+
+    /// @brief       compute sample weight w
+    ///
+    /// @param [in]  particle system states and state covariances
+    /// @param [in]  Z - range-bearing measurements
+    /// @param [in]  IDF - index tags for each landmark
+    /// @param [in]  R - measurement noise covariance
+    /// @param [out] likelihood give states
+    float likelihood(const Particle_t&      particles,
+                     const Eigen::MatrixXf& Z,
+                     const Eigen::VectorXi& idf,
+                     const Eigen::MatrixXf& R) override
+    {
+        return 0;
+    }
+
+    /// @brief       sample from proposal distribution
+    ///
+    /// @param [in]  X - slam state
+    /// @param [in]  P - state covariance
+    /// @param [in]  n - number of samples
+    /// @param [out] proposed distribution
+    Eigen::MatrixXf multivariateGauss(const Eigen::VectorXf& X, const Eigen::MatrixXf& P, int n) override
+    {
+        return {};
+    }
 
     /// @brief       Perform state update for a given heading measurement, phi, with fixed measurement noise sigmaPhi
     ///
@@ -208,7 +211,17 @@ class EKF : public Slam
     /// @param [in]  phi - bearing measurements
     /// @param [in]  useHeadings - by default false
     /// @param [out] state and covariance
-    void observeHeading(Eigen::MatrixXf& X, Eigen::MatrixXf& P, const float& phi, bool useHeading = false) override;
+    void observeHeading(Eigen::VectorXf& X, Eigen::MatrixXf& P, const float& phi, bool useHeading = false) override;
+
+    /// @brief       Perform state update for a given heading measurement, phi, with fixed measurement noise sigmaPhi
+    ///
+    /// @param[in]   particle system states and state covariances
+    /// @param [in]  phi - bearing measurements
+    /// @param [in]  useHeadings - by default false
+    /// @param [out] state and covariance
+    void observeHeading(Particle_t& particle, const float& phi, bool useHeading = false) override
+    {
+    }
 
     /// @brief       Given a feature index (ie, the order of the feature in the state vector), predict the expected
     /// range - bearing observation of this feature and its Jacobian.
@@ -216,13 +229,7 @@ class EKF : public Slam
     /// @param [in]  X - state vector
     /// @param [in]  idf - index of feature order in state
     /// @param [out] ObserveModel_t - predicted observation and observation Jacobian
-    ObserveModel_t observeModel(const Eigen::MatrixXf& X, int idf) override;
-
-    /// @brief       format give angle
-    ///
-    /// @param [in]  angle
-    /// @param [out] formated angle
-    float pi2Pi(float angle);
+    ObserveModel_t observeModel(const Eigen::VectorXf& X, int idf) override;
 
     /// @brief       Predict the prior state and covariance
     ///
@@ -234,13 +241,74 @@ class EKF : public Slam
     /// @param [in]  wb - vehicle wheelbase
     /// @param [in]  dt - timestep
     /// @param [out] Xn, Pn - predicted state and covariance
-    void predict(Eigen::MatrixXf&       X,
+    void predict(Eigen::VectorXf&       X,
                  Eigen::MatrixXf&       P,
                  const float&           v,
                  const float&           swa,
                  const Eigen::MatrixXf& Q,
                  const float&           wb,
                  const float&           dt) override;
+
+    /// @brief       Predict the prior state and covariance of particles
+    ///
+    /// @param [in]  particle prior system states and state covariances
+    /// @param [in]  v - host velocity
+    /// @param [in]  swa -  steering wheel angle
+    /// @param [in]  Q - covariance matrix for velocity and gamma
+    /// @param [in]  wb - vehicle wheelbase
+    /// @param [in]  dt - timestep
+    /// @param [out] Xn, Pn - predicted state and covariance of particles
+    void predict(Particle_t&            particle,
+                 const float&           v,
+                 const float&           swa,
+                 const Eigen::MatrixXf& Q,
+                 const float&           wb,
+                 const float&           dt) override
+    {
+    }
+
+    /// @brief       resample the particles if their weight variance is such that N effective is less thatn Nmin
+    ///
+    /// @param [in]  particle system states and state covariances
+    /// @param [in]  numEffective - effective numbef of particles
+    /// @param [in]  resampleStatus - 1 means resample is on
+    /// @param [out] resampled state and covariance of particles
+    void resampleParticles(std::vector<Particle_t>& particles, int numEffective, bool resampleStatus = false) override
+    {
+    }
+
+    /// @brief       compute proposal distribution, then sample from it, and compute new particle weight
+    ///
+    /// @param [in]  particle system states and state covariances
+    /// @param [in]  Z - range-bearing measurements
+    /// @param [in]  IDF - index tags for each landmark
+    /// @param [in]  R - measurement noise covariance
+    /// @param [out] sampled state and covariance of particles
+    void sampleProposal(Particle_t&            particle,
+                        const Eigen::MatrixXf& Z,
+                        const Eigen::VectorXi& idf,
+                        const Eigen::MatrixXf& R) override
+    {
+    }
+
+    /// @brief       compute effective particles
+    ///
+    /// @param [in]  w - set of N weights [w1,..wN]
+    /// @param [out] keep - N indices of particles to keep
+    /// @param [out] Neff - number of effective particles (measure of weight variance)
+    Stratified_t stratifiedResample(Eigen::MatrixXf& w) override
+    {
+        return {};
+    }
+
+    /// @brief       Generate N uniform random numbers stratified within interval (0,1)
+    ///
+    /// @param [in]  N - number of samples
+    /// @param [out] set of samples are in ascending order
+    Eigen::MatrixXf stratifiedRandom(int n) override
+    {
+        return {};
+    }
 
     /// @brief       instance update
     /// @param [in]  X - predicted slam state
@@ -249,11 +317,11 @@ class EKF : public Slam
     /// @param [in]  R - measurement noise covariance
     /// @param [in]  IDF - feature index for each z
     /// @param [out] updated state and covariance
-    void singleUpdate(Eigen::MatrixXf&       X,
+    void singleUpdate(Eigen::VectorXf&       X,
                       Eigen::MatrixXf&       P,
                       const Eigen::MatrixXf& Z,
                       const Eigen::MatrixXf& R,
-                      const Eigen::MatrixXf& IDF) override;
+                      const Eigen::VectorXi& idf) override;
 
     /// @brief       Update the predcited state and covariance with observation
     /// @param [in]  X - predicted slam state
@@ -263,19 +331,10 @@ class EKF : public Slam
     /// @param [in]  IDF - feature index for each z
     /// @param [in]  batch - switch to specify whether to process measurements together or sequentially
     /// @param [out] updated state and covariance
-    void update(Eigen::MatrixXf&       X,
+    void update(Eigen::VectorXf&       X,
                 Eigen::MatrixXf&       P,
                 const Eigen::MatrixXf& Z,
                 const Eigen::MatrixXf& R,
-                const Eigen::MatrixXf& IDF,
+                const Eigen::VectorXi& idf,
                 bool                   batch = false) override;
-
-    /// @brief       compute vehicle pose
-    /// @param [in]  X - vehicle pose [x;y;phi]
-    /// @param [in]  v - velocity
-    /// @param [in]  swa - steer angle
-    /// @param [in]  wb - wheelbase
-    /// @param [in]  dt - change in time
-    /// @param [out] new vehicle pose
-    void vehicleModel(Eigen::MatrixXf& X, const float& v, const float& swa, const float& wb, const float& dt) override;
 };
