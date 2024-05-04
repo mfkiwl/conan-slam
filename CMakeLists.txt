@@ -96,6 +96,8 @@ set(SRC_LIST
     slam/include/Slam.h
 	slam/include/EKF.h
     slam/src/EKF.cpp
+    slam/include/PF.h
+    slam/src/PF.cpp
 )
 
 set(TEST_SRC_LIST

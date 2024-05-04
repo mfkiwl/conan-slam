@@ -6,16 +6,20 @@
 #include <vector>
 
 #include "EKF.h"
+#include "PF.h"
 
 using Vector2f_t = Eigen::Vector2f;
 using Vector3f_t = Eigen::Vector3f;
-
 using namespace std;
 
 int main()
 {
     try
     {
+        // << select the type here
+        bool useEKF = true;
+        bool usePF  = false;
+
         // Landmarks info
         std::vector<float> lm1r = {1286.9623655913983384380117058754F,  -16.801075268817204301075268817204F,
                                    2879.7043010752677218988537788391F,  4042.3387096774185920367017388344F,
@@ -83,8 +87,7 @@ int main()
 
         // perform EKF-SLAM landmarks based navigation (test)
         std::shared_ptr<Slam> ekfSlam(new EKF(LM, WP));
-
-        if (ekfSlam != nullptr && true)
+        if (ekfSlam != nullptr && useEKF) // for debug insert true
         {
 
             Eigen::MatrixXf Q = Eigen::MatrixXf::Zero(2, 2);
@@ -193,6 +196,140 @@ int main()
                             ekfSlam->augment(X, P, ZN, RE);
                         }
                     }
+                }
+            }
+        }
+
+        // perform PF-SLAM landmarks based navigation (test)
+        std::shared_ptr<Slam> pfSlam(new PF(LM, WP));
+        if (pfSlam != nullptr && usePF) // for debug insert true
+        {
+            // initialization
+            auto particles = pfSlam->initializeParticles(pfSlam->mNumParticles);
+
+            Eigen::MatrixXf Q = Eigen::MatrixXf::Zero(2, 2);
+            Q(0, 0)           = std::pow(pfSlam->mSigmaV, 2.0F);
+            Q(0, 1)           = 0.0F;
+            Q(1, 0)           = 0.0F;
+            Q(1, 1)           = std::pow(pfSlam->mSigmaSWA, 2.0F);
+
+            Eigen::MatrixXf R = Eigen::MatrixXf::Zero(2, 2);
+            R(0, 0)           = std::pow(pfSlam->mSigmaR, 2.0F);
+            R(0, 1)           = 0.0F;
+            R(1, 0)           = 0.0F;
+            R(1, 1)           = std::pow(pfSlam->mSigmaB, 2.0F);
+
+            // initialise states
+            Eigen::VectorXf XTrue = Eigen::VectorXf::Zero(3);
+            Eigen::VectorXf X     = Eigen::VectorXf::Zero(3);
+            Eigen::MatrixXf P     = Eigen::MatrixXf::Zero(3, 3);
+
+            double dt    = pfSlam->mDtControls; // change in time between predicts
+            double dtsum = 0.0F;                // change in time since last observation
+
+            // identifier for each landmark
+            Eigen::VectorXi FeatureTag = Eigen::VectorXi::Zero(ekfSlam->getLandMarks().cols());
+            int             index      = 0;
+            std::transform(FeatureTag.begin(), FeatureTag.end(), FeatureTag.begin(), [&](int& i) { return ++index; });
+
+            int   iwp = 1;    //  index of first waypoint
+            float swa = 0.0F; // initial steering wheel angle
+
+            Eigen::MatrixXf QE = Q;
+            Eigen::MatrixXf RE = R;
+
+            // inflate estimated noises (ie, add stabilising noise)
+            if (pfSlam->mSwitchInflateNoise)
+            {
+                QE = 2 * Q;
+                RE = 2 * R;
+            }
+
+            int indexlooper = 0;
+            while (iwp <= pfSlam->getWayPoints().cols() && iwp > 0)
+            {
+                std::cout << "indexlooper" << "\t" << ++indexlooper << std::endl;
+                std::cout << "\n" << std::endl;
+
+                // compute steering wheel angle
+                pfSlam->computeSWA(XTrue,
+                                   pfSlam->getWayPoints(),
+                                   iwp,
+                                   pfSlam->mAtWaypoint,
+                                   swa,
+                                   pfSlam->mRateSWA,
+                                   pfSlam->mMaxSWA,
+                                   dt);
+
+                // perform loops : if final waypoint reached, go back to first
+                if (iwp == 0 && pfSlam->mNumberLoops > 1)
+                {
+                    iwp                  = 1;
+                    pfSlam->mNumberLoops = pfSlam->mNumberLoops - 1;
+                }
+
+                pfSlam->vehicleModel(XTrue,
+                                     pfSlam->mVelocity,
+                                     swa,
+                                     pfSlam->mWheelBase,
+                                     dt); // movment of the platform(Odo meter reading)
+
+                auto [vn, swan] = pfSlam->addControlNoise(pfSlam->mVelocity, swa, Q, pfSlam->mSwitchControlNoise);
+
+                for (int pl = 0; pl < pfSlam->mNumParticles; pl++)
+                {
+                    // predict
+                    pfSlam->predict(particles[pl], vn, swan, QE, pfSlam->mWheelBase, dt);
+
+                    // if heading known, observe heading
+                    pfSlam->observeHeading(particles[pl], XTrue(2), pfSlam->mSwitchHeadingKnown);
+                }
+
+                // EKF update step
+                dtsum = dtsum + dt;
+                if (dtsum >= pfSlam->mDtObserve)
+                {
+                    dtsum = 0.0F;
+
+                    auto [Z, FeatureTagVisible] =
+                        pfSlam->getObservations(XTrue, pfSlam->getLandMarks(), FeatureTag, pfSlam->mMaxRange);
+
+                    pfSlam->addObservationNoise(Z, R, pfSlam->mSwitchSensorNoise);
+
+                    int nf             = particles[0].XF.cols();
+                    auto [ZF, ZN, IDF] = pfSlam->dataAssociateTable(Z, FeatureTagVisible, pfSlam->mTABLE, nf);
+
+                    // observe map features
+                    if (std::max(ZF.rows(), ZF.cols()) > 0)
+                    {
+                        for (int i = 0; i < pfSlam->mNumParticles; i++)
+                        {
+                            pfSlam->sampleProposal(particles[i], ZF, IDF, RE);
+                            pfSlam->featureUpdate(particles[i], ZF, IDF, RE);
+                        }
+                        pfSlam->resampleParticles(particles, pfSlam->mNumEffective, pfSlam->mSwitchResample);
+                    }
+
+                    // observe new features, augment map
+                    if (std::max(ZN.rows(), ZN.cols()) > 0)
+                    {
+                        for (int i = 0; i < pfSlam->mNumParticles; i++)
+                        {
+                            // sample from proposal distribution
+                            if (std::max(ZF.rows(), ZF.cols()) == 0)
+                            {
+                                particles[i].X =
+                                    pfSlam->multivariateNormalGaussianDistribution(particles[i].X, particles[i].P, 1);
+
+                                particles[i].P = Eigen::MatrixXf::Zero(3, 3);
+                            }
+                            pfSlam->addOneNewFeature(particles[i], ZN, RE);
+                        }
+                    }
+
+                    auto extractedStates = pfSlam->extractStatesFromParticles(particles);
+                    std::cout << extractedStates(0) << "\t" << extractedStates(1) << "\t" << extractedStates(2) << "\t"
+                              << "\n";
                 }
             }
         }

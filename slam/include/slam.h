@@ -122,7 +122,7 @@ class Slam
         float                        w;  // particle weight
         Eigen::VectorXf              X;  // ego state
         Eigen::MatrixXf              P;  // ego covariance
-        Eigen::VectorXf              XF; // feature state
+        Eigen::MatrixXf              XF; // feature state
         std::vector<Eigen::MatrixXf> PF; // feature covariance
     };
     /// @brief       add a new features to state
@@ -485,6 +485,58 @@ class Slam
                                         const Eigen::MatrixXf& R,
                                         const float&           gate1,
                                         const float&           gate2) = 0;
+
+    /// @brief       extract pf-slam state from updated particles
+    ///
+    /// @param [in]  particle system states
+    /// @param [out] X - slam state
+    Eigen::VectorXf extractStatesFromParticles(const std::vector<Particle_t>& particles)
+    {
+        Eigen::VectorXf output;
+        output.resize(0);
+
+        if (particles.size() > 0)
+        {
+            std::vector<float> weights = {};
+            for (auto& p : particles)
+            {
+                weights.push_back(p.w);
+            }
+            auto result = std::minmax_element(weights.begin(), weights.end());
+            int  pos    = result.first - weights.begin();
+            output      = Eigen::VectorXf::Zero(3);
+            output      = particles[pos].X;
+        }
+        return output;
+    }
+
+    /// @brief       extract features from slam-pf particles
+    ///
+    /// @param [in]  particle system states
+    /// @param [out] XF - Features
+    Eigen::MatrixXf extractFeaturesFromParticles(const std::vector<Particle_t>& particles)
+    {
+        Eigen::MatrixXf output;
+        output.resize(0, 0);
+
+        if (particles.size() > 0)
+        {
+            int count = 0;
+            for (auto& p : particles)
+            {
+                count = count + p.XF.cols();
+            }
+            output  = Eigen::MatrixXf::Zero(2, count);
+            int len = 0;
+            for (auto& p : particles)
+            {
+                Eigen::MatrixXf XF                 = p.XF;
+                output.block(0, len, 2, XF.cols()) = XF;
+                len                                = len + XF.cols();
+            }
+        }
+        return output;
+    }
 
     /// @brief       Having selected a new pose from the proposal distribution, this pose is assumed perfect and each
     ///              feature update may be computed independently and without pose uncertainty.
