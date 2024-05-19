@@ -1,7 +1,7 @@
 # conan-slam
 EKF-based SLAM for valet, remote parking, and including or nav in GPS-denied situations. 
 
-# This branch provides a SLAM solution based on EKF.
+# This branch provides a SLAM solution based on EKF and Particle Filter.
 
 # Prerequisite (Window):
 * Conan
